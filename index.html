@@ -1,0 +1,1646 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="night">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="icon.png">
+  <title>ダーツ練習記録</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="css/site.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    .dartboard {
+      display: block;
+      width: 100%;
+      max-width: 520px;
+      aspect-ratio: 1 / 1;
+      margin: 0 auto;
+      touch-action: manipulation;
+      user-select: none;
+    }
+
+    .dartboard-input {
+      cursor: crosshair;
+    }
+
+    .darts-light-control {
+      background: #ffffff !important;
+      color: #0f172a !important;
+    }
+
+    /* daisyUI の textarea は line-height: 2 で、iPhone ではカーソルが文字の倍の高さになるため詰める。
+       16px 未満だと iPhone は入力時に画面を拡大するので 16px にする */
+    textarea.darts-light-control {
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .compare-swatch-a {
+      color: #facc15;
+    }
+
+    .compare-swatch-b {
+      color: #e879f9;
+    }
+
+    @media (max-width: 640px) {
+
+      .compare-table th,
+      .compare-table td {
+        padding: 0.4rem 0.4rem;
+        font-size: 0.8rem;
+      }
+    }
+
+    /* 固定した見出しの背景を表の背景に合わせる */
+    .games-table-frame thead tr {
+      background: #172033;
+    }
+
+    .darts-chart-frame {
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    /* 推移グラフは、ゲームが増えたら横に伸ばしてスクロールで見る */
+    .trend-scroll {
+      height: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior: none;
+    }
+
+    .trend-inner {
+      position: relative;
+      height: 100%;
+      min-width: 100%;
+    }
+
+    .trend-inner canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* スクロールしても縦軸の目盛りが読めるよう、目盛りの部分を写した canvas を左に重ねる */
+    .trend-axis {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* 相談チャットのパネル。広い画面では右に並べ、狭い画面では全体に重ねる */
+    :root {
+      --chat-dock-width: 440px;
+    }
+
+    .chat-dock {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 50;
+      /* 閉じている間は非表示。開くときは表示してから横から滑り込ませ、閉じるときは滑り出させてから非表示にする */
+      display: none;
+      flex-direction: column;
+      width: min(var(--chat-dock-width), 100vw);
+      height: 100dvh;
+      background: #0f172a;
+      border-left: 1px solid #334155;
+      box-shadow: -12px 0 30px rgba(2, 6, 23, 0.5);
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+    }
+
+    .chat-dock.shown {
+      display: flex;
+    }
+
+    .chat-dock.open {
+      transform: none;
+    }
+
+    /* 広い画面で記録の画面が左に寄る動きも、パネルに合わせる */
+    body {
+      transition: padding-right 0.25s ease;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      .chat-dock,
+      body {
+        transition: none;
+      }
+    }
+
+    .chat-dock iframe {
+      flex: 1;
+      width: 100%;
+      border: 0;
+    }
+
+    /* 開く・閉じるのボタン。パネルの上にも出るように、パネルより手前に置く */
+    .chat-dock-fab {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      z-index: 60;
+    }
+
+    /* 広い画面では、パネルを開いている間は記録の画面を左に寄せて並べる */
+    @media (min-width: 1100px) {
+      body.chat-dock-open {
+        padding-right: var(--chat-dock-width);
+      }
+    }
+
+    @media (max-width: 1099px) {
+      .chat-dock {
+        width: 100vw;
+        border-left: 0;
+      }
+    }
+  </style>
+</head>
+
+<body class="page-shell">
+  <div class="main-container">
+    <div class="page-card">
+      <div class="card-body space-y-6">
+        <div class="section-title section-title-inline">
+          <h1 class="hero-title" style="font-size: clamp(2rem, 7vw, 2.8rem);">ダーツ練習記録</h1>
+        </div>
+
+        <div id="status" class="rounded-lg bg-slate-900/50 px-4 py-3 text-sm text-slate-200">データを読み込み中...</div>
+
+        <!-- 入力 -->
+        <div class="rounded-2xl border border-slate-700 bg-slate-900/60 p-4">
+          <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-bold text-white">カウントアップ入力</h2>
+              <p class="text-sm text-slate-300">刺さった場所をボード上でタップしてください。ボードの外側をタップするとボード外（0点）になります。</p>
+            </div>
+            <div>
+              <label for="input-target" class="mb-1 block text-xs font-semibold text-slate-300">狙い</label>
+              <select id="input-target" class="select select-bordered select-sm bg-slate-100 text-slate-900"></select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div>
+              <svg id="input-board" class="dartboard dartboard-input" viewBox="-200 -200 400 400" aria-label="入力用ダーツボード"></svg>
+            </div>
+
+            <div class="space-y-4">
+              <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+                  <p class="text-xs text-slate-300">ラウンド</p>
+                  <p id="current-round" class="mt-1 text-xl font-black text-white">1 / 8</p>
+                </div>
+                <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+                  <p class="text-xs text-slate-300">本目</p>
+                  <p id="current-dart" class="mt-1 text-xl font-black text-white">1 / 3</p>
+                </div>
+                <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+                  <p class="text-xs text-slate-300">ラウンド点</p>
+                  <p id="round-score" class="mt-1 text-xl font-black text-white">0</p>
+                </div>
+                <div class="rounded-xl border border-amber-400/40 bg-amber-900/20 p-3">
+                  <p class="text-xs text-slate-200">合計</p>
+                  <p id="total-score" class="mt-1 text-xl font-black text-amber-200">0</p>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-2">
+                <button id="undo-btn" class="rounded-lg bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40">1本戻す</button>
+                <button id="miss-btn" class="rounded-lg bg-slate-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">ボード外</button>
+                <button id="reset-btn" class="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-40">リセット</button>
+              </div>
+              <p class="text-xs text-slate-400">「ボード外」ボタンは、刺さらず落ちた場合など位置がわからないときに使います。</p>
+
+              <div class="overflow-x-auto overscroll-none rounded-xl border border-slate-700">
+                <table class="table table-sm text-slate-200">
+                  <thead>
+                    <tr class="text-slate-300">
+                      <th>R</th>
+                      <th>1本目</th>
+                      <th>2本目</th>
+                      <th>3本目</th>
+                      <th class="text-right">合計</th>
+                    </tr>
+                  </thead>
+                  <tbody id="throws-table"></tbody>
+                </table>
+              </div>
+
+              <div id="save-panel" class="hidden space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p class="font-semibold">8ラウンド終了。保存しますか？</p>
+                <div>
+                  <label for="note" class="mb-1 block text-sm font-semibold text-slate-700">メモ</label>
+                  <p class="mb-2 text-xs text-slate-500">意識したこと、投げてみて思ったこと・気づいたこと、体調など自由に書いてください。</p>
+                  <textarea id="note" rows="4" class="darts-light-control textarea textarea-bordered w-full" placeholder="例:&#10;意識：投げる前に毎回体勢を直してから&#10;感想：後半は少し急いでしまった"></textarea>
+                </div>
+                <button id="save-btn" class="w-full rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-40">保存</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 分析 -->
+        <div class="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 space-y-4">
+          <div class="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-bold text-white">分析</h2>
+              <p class="text-sm text-slate-300">選んだ狙いのゲームだけで、刺さった位置と集計を出します。ずれや距離は狙った場所の中心から測ります。</p>
+            </div>
+            <div class="flex flex-wrap items-end gap-2">
+              <div>
+                <label for="analysis-target" class="mb-1 block text-xs font-semibold text-slate-300">狙い</label>
+                <select id="analysis-target" class="select select-bordered select-sm bg-slate-100 text-slate-900"></select>
+              </div>
+              <div>
+                <label for="range-mode" class="mb-1 block text-xs font-semibold text-slate-300">対象</label>
+                <select id="range-mode" class="select select-bordered select-sm bg-slate-100 text-slate-900">
+                  <option value="1">最新ゲーム</option>
+                  <option value="5" selected>直近5ゲーム</option>
+                  <option value="10">直近10ゲーム</option>
+                  <option value="all">全期間</option>
+                </select>
+              </div>
+              <button id="refresh-btn" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">更新</button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">平均スコア</p>
+              <p id="stat-average" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p id="stat-hit-label" class="text-xs text-slate-300">的中</p>
+              <p id="stat-hit" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">ボード外</p>
+              <p id="stat-out" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">平均のずれ</p>
+              <p id="stat-offset" class="mt-1 text-lg font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">外れ幅（横・縦）</p>
+              <p id="stat-abs" class="mt-1 text-lg font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">ブレ幅（横・縦）</p>
+              <p id="stat-dev" class="mt-1 text-lg font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">狙いからの平均距離</p>
+              <p id="stat-distance" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">ラウンド内のまとまり</p>
+              <p id="stat-grouping" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
+            <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">左右の行ったり来たり</p>
+              <p id="stat-flips" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
+          </div>
+          <details class="rounded-xl border border-slate-700 bg-slate-800/40 px-3 py-2 text-xs text-slate-300">
+            <summary class="cursor-pointer font-semibold text-slate-200">指標の見方</summary>
+            <ul class="mt-2 list-disc space-y-1 pl-5">
+              <li><b>平均のずれ</b>：刺さった位置の平均。どちらに偏っているか（狙いや癖の向き）が分かります。左右に散ると打ち消し合って小さく見えます。</li>
+              <li><b>的中</b>：狙った場所に入った本数。BULL ならブル、T20 なら 20 のトリプルです。トリプルを狙ったときは、狙ったナンバー（シングル・ダブル含む）に入った本数も出します。</li>
+              <li><b>平均のずれ・外れ幅・距離</b>：狙った場所の中心（BULL ならブルの中心、T20 なら 20 のトリプルの中心）から測ります。</li>
+              <li><b>外れ幅</b>：1本ずつ、狙いから横・縦に何mm外れたかを向きを無視して平均したもの。毎回狙いからどれくらい外れているかが分かります。</li>
+              <li><b>ブレ幅</b>：1本ずつ、刺さった位置の平均（ピンクの×）から横・縦に何mm離れたかを向きを無視して平均したもの。狙いの偏りを除いた、毎回の投げのバラつきが分かります。外れ幅は大きいのにブレ幅が小さいなら、狙う点を直せば良くなります。</li>
+              <li><b>ラウンド内のまとまり</b>：同じラウンドの3本が、その3本の中心から平均何mm離れているか。小さいほど同じ所に集まっています。</li>
+              <li><b>左右の行ったり来たり</b>：同じラウンドで続けて投げた2本が、狙いの左右で反対側に行った回数。多いと、前の1本を見て直しすぎている可能性があります（ほぼ中央の投げは除外）。</li>
+            </ul>
+          </details>
+
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div>
+              <h3 class="mb-2 text-sm font-bold text-white">刺さった位置 <span id="plot-caption" class="font-normal text-slate-300"></span></h3>
+              <svg id="analysis-board" class="dartboard" viewBox="-200 -200 400 400" aria-label="刺さった位置のプロット"></svg>
+              <p class="mt-2 text-xs text-slate-400">水色の点が1本ずつの位置、ピンクの×が平均の位置、蛍光の緑に塗った区画が狙った場所です。</p>
+            </div>
+            <div class="space-y-4">
+              <div>
+                <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 class="text-sm font-bold text-white">推移</h3>
+                  <select id="trend-metric" class="select select-bordered select-sm bg-slate-100 text-slate-900" aria-label="推移グラフの指標"></select>
+                </div>
+                <p id="trend-caption" class="mb-2 text-xs text-slate-400"></p>
+                <div class="darts-chart-frame relative h-56">
+                  <canvas id="trend-axis" class="trend-axis hidden"></canvas>
+                  <div id="trend-scroll" class="trend-scroll">
+                    <div id="trend-inner" class="trend-inner">
+                      <canvas id="score-chart"></canvas>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <!-- 約10ゲーム分の高さで止め、それより前のゲームは縦スクロールで見る（見出しは固定）。
+                   overscroll-none で、iPhone で端まで来たときに引っ張っても空白が出ないようにする -->
+              <div class="games-table-frame max-h-[25rem] overflow-auto overscroll-none rounded-xl border border-slate-700">
+                <table class="table table-sm table-pin-rows text-slate-200">
+                  <thead>
+                    <tr class="text-slate-300">
+                      <th>日時</th>
+                      <th>No.</th>
+                      <th class="text-right">スコア</th>
+                      <th class="text-right">スタッツ</th>
+                      <th>メモ</th>
+                    </tr>
+                  </thead>
+                  <tbody id="games-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ゲーム比較 -->
+        <div class="rounded-2xl border border-slate-700 bg-slate-900/60 p-4 space-y-4">
+          <div>
+            <h2 class="text-lg font-bold text-white">ゲーム比較</h2>
+            <p class="text-sm text-slate-300">分析欄で選んでいる狙いのゲームから2つ選んで、刺さった位置と集計を比べます。差は「B − A」です。番号は狙いごとの通し番号です。</p>
+          </div>
+
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-end">
+            <div>
+              <label for="compare-a" class="mb-1 block text-xs font-semibold text-slate-300"><span class="compare-swatch-a">●</span> ゲームA</label>
+              <select id="compare-a" class="select select-bordered select-sm w-full bg-slate-100 text-slate-900"></select>
+            </div>
+            <!-- 縦並び（スマホ）では小さな上下矢印、横並びでは左右矢印 -->
+            <button id="compare-swap-btn" class="justify-self-center rounded-full bg-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 sm:justify-self-auto sm:rounded-lg sm:py-2" aria-label="AとBを入れ替え" title="AとBを入れ替え">
+              <i class="fa-solid fa-right-left rotate-90 sm:rotate-0"></i>
+            </button>
+            <div>
+              <label for="compare-b" class="mb-1 block text-xs font-semibold text-slate-300"><span class="compare-swatch-b">◆</span> ゲームB</label>
+              <select id="compare-b" class="select select-bordered select-sm w-full bg-slate-100 text-slate-900"></select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div>
+              <svg id="compare-board" class="dartboard" viewBox="-200 -200 400 400" aria-label="2ゲームの刺さった位置の比較"></svg>
+              <p class="mt-2 text-xs text-slate-400">
+                <span class="compare-swatch-a">●</span> ゲームA　<span class="compare-swatch-b">◆</span> ゲームB　× はそれぞれの平均の位置、蛍光の緑に塗った区画は狙った場所です。
+              </p>
+            </div>
+            <div class="space-y-4">
+              <div id="compare-notes" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
+              <div class="overflow-x-auto overscroll-none rounded-xl border border-slate-700">
+                <table class="compare-table table table-sm text-slate-200">
+                  <thead>
+                    <tr class="text-slate-300">
+                      <th>項目</th>
+                      <th><span class="compare-swatch-a">●</span> A</th>
+                      <th><span class="compare-swatch-b">◆</span> B</th>
+                      <th>差</th>
+                    </tr>
+                  </thead>
+                  <tbody id="compare-table"></tbody>
+                </table>
+              </div>
+              <div>
+                <h3 class="mb-1 text-sm font-bold text-white">何本目ごとの比較</h3>
+                <p class="mb-2 text-xs text-slate-400">上が平均のずれ、灰色の「幅」が外れ幅（横・縦）です。距離は狙いからの平均距離（mm）です。</p>
+                <div class="overflow-x-auto overscroll-none rounded-xl border border-slate-700">
+                  <table class="compare-table table table-sm text-slate-200">
+                    <thead>
+                      <tr class="text-slate-300">
+                        <th></th>
+                        <th><span class="compare-swatch-a">●</span> A のずれ</th>
+                        <th><span class="compare-swatch-b">◆</span> B のずれ</th>
+                        <th>距離<br><span class="font-normal">A→B</span></th>
+                      </tr>
+                    </thead>
+                    <tbody id="compare-dart-table"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "https://jpkycfgmgmrhuqambtxm.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_RmbuaFKZCRzEatZeGRWi6A_CBaaEOFB";
+    const GAMES_TABLE = "darts_games";
+    const THROWS_TABLE = "darts_throws";
+    const SAVE_FUNCTION = "save_darts_game";
+    const STORAGE_KEY = "darts.countup.inProgress";
+    const TREND_METRIC_KEY = "darts.trendMetric";
+    // 推移グラフの線の色（2本描くときは青とオレンジ。色覚の違いでも見分けられることを確認済み）
+    const TREND_SERIES_COLORS = ["#3b82f6", "#d97706"];
+    const INPUT_TARGET_KEY = "darts.inputTarget";
+    const PAGE_SIZE = 1000;
+
+    const supabaseClient = window.supabase && typeof window.supabase.createClient === "function"
+      ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+      : null;
+
+    // ボードの寸法（mm、ソフトダーツ相当の比率）とナンバーの並び（真上から時計回り）
+    const BOARD = { innerBull: 6.35, outerBull: 15.9, tripleIn: 99, tripleOut: 107, doubleIn: 162, doubleOut: 170 };
+    const NUMBER_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+    // 狙える場所。今はクリケットで使う BULL と T20〜T15 に絞る
+    // （データベースは T1〜T20 まで受け付けるので、増やすときはここに足すだけでよい）
+    const TARGETS = ["BULL", "T20", "T19", "T18", "T17", "T16", "T15"];
+    // トリプルを狙うときの中心（トリプルのリングの真ん中）までの半径
+    const TRIPLE_CENTER_RADIUS = 103;
+    // 狙った区画を塗る色（蛍光の緑。ボードの赤・青・黒・白や、投げの点の水色・黄色と紛れない）
+    const TARGET_FILL_COLOR = "#39ff14";
+    // 左右の行ったり来たりを数えるとき、狙いの縦の線からこの距離（mm）以内の投げは除外する
+    const FLIP_CENTER_MARGIN = 15;
+    // DARTSLIVE 風の配色（シングルは黒/白、ダブル・トリプルは赤/青）
+    const BOARD_COLORS = { black: "#1a1a1a", white: "#f4f4f5", red: "#d7263d", blue: "#1e63d6" };
+    // 入力・分析の点はボードに無い色にして見分けやすくする
+    const MARKER_COLORS = { current: "#facc15", past: "#22d3ee" };
+    // 比較の2ゲーム。ボードの黒・白・赤・青と紛れない黄色とピンクにし、色覚の違いでも見分けられることを確認済み。形も丸とひし形で分ける
+    const COMPARE_COLORS = { a: "#facc15", b: "#e879f9" };
+    const ROUNDS = 8;
+    const DARTS_PER_ROUND = 3;
+    const TOTAL_DARTS = ROUNDS * DARTS_PER_ROUND;
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    const statusEl = document.getElementById("status");
+    const inputBoardEl = document.getElementById("input-board");
+    const analysisBoardEl = document.getElementById("analysis-board");
+    const currentRoundEl = document.getElementById("current-round");
+    const currentDartEl = document.getElementById("current-dart");
+    const roundScoreEl = document.getElementById("round-score");
+    const totalScoreEl = document.getElementById("total-score");
+    const undoBtn = document.getElementById("undo-btn");
+    const missBtn = document.getElementById("miss-btn");
+    const resetBtn = document.getElementById("reset-btn");
+    const throwsTableEl = document.getElementById("throws-table");
+    const savePanel = document.getElementById("save-panel");
+    const noteEl = document.getElementById("note");
+    const saveBtn = document.getElementById("save-btn");
+    const rangeModeEl = document.getElementById("range-mode");
+    const inputTargetEl = document.getElementById("input-target");
+    const analysisTargetEl = document.getElementById("analysis-target");
+    const refreshBtn = document.getElementById("refresh-btn");
+    const plotCaptionEl = document.getElementById("plot-caption");
+    const gamesTableEl = document.getElementById("games-table");
+    const scoreChartEl = document.getElementById("score-chart");
+    const trendMetricEl = document.getElementById("trend-metric");
+    const trendScrollEl = document.getElementById("trend-scroll");
+    const trendInnerEl = document.getElementById("trend-inner");
+    const trendAxisEl = document.getElementById("trend-axis");
+    // 推移グラフで1ゲームに使う横幅（px）。これより詰まるときは横にスクロールする
+    const TREND_POINT_WIDTH = 34;
+    const TREND_AXIS_ALLOWANCE = 70;
+    // 縦軸を写した canvas の背景（グラフの周りの色に近づける）
+    const TREND_AXIS_BACKGROUND = "#141c2e";
+    const trendCaptionEl = document.getElementById("trend-caption");
+
+    const statAverageEl = document.getElementById("stat-average");
+    const statHitLabelEl = document.getElementById("stat-hit-label");
+    const statHitEl = document.getElementById("stat-hit");
+    const statOutEl = document.getElementById("stat-out");
+    const statOffsetEl = document.getElementById("stat-offset");
+    const statDistanceEl = document.getElementById("stat-distance");
+    const statAbsEl = document.getElementById("stat-abs");
+    const statDevEl = document.getElementById("stat-dev");
+    const statGroupingEl = document.getElementById("stat-grouping");
+    const statFlipsEl = document.getElementById("stat-flips");
+
+    const compareAEl = document.getElementById("compare-a");
+    const compareBEl = document.getElementById("compare-b");
+    const compareSwapBtn = document.getElementById("compare-swap-btn");
+    const compareBoardEl = document.getElementById("compare-board");
+    const compareNotesEl = document.getElementById("compare-notes");
+    const compareTableEl = document.getElementById("compare-table");
+    const compareDartTableEl = document.getElementById("compare-dart-table");
+
+    let throws = loadInProgress();
+    let inputTarget = loadInputTarget();
+    let games = [];
+    let scoreChart = null;
+    let inputMarkersLayer = null;
+    let analysisMarkersLayer = null;
+    let compareMarkersLayer = null;
+    // ゲームIDごとの投げのキャッシュ（比較で同じゲームを何度も取得しないため）
+    const throwsByGame = new Map();
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.className = isError
+        ? "rounded-lg bg-rose-900/50 px-4 py-3 text-sm text-rose-100"
+        : "rounded-lg bg-slate-900/50 px-4 py-3 text-sm text-slate-200";
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    // ---------- 途中のゲームはブラウザに一時保存 ----------
+
+    function loadInProgress() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        return Array.isArray(saved) ? saved.slice(0, TOTAL_DARTS) : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function saveInProgress() {
+      try {
+        if (throws.length) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(throws));
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (error) {
+        // 保存できなくても入力は続けられる
+      }
+    }
+
+    // 狙いは次のゲームでも同じことが多いので、ブラウザに覚えておく
+    function loadInputTarget() {
+      try {
+        const saved = localStorage.getItem(INPUT_TARGET_KEY);
+        return TARGETS.includes(saved) ? saved : "BULL";
+      } catch (error) {
+        return "BULL";
+      }
+    }
+
+    function saveInputTarget() {
+      try {
+        localStorage.setItem(INPUT_TARGET_KEY, inputTarget);
+      } catch (error) {
+        // 保存できなくても入力は続けられる
+      }
+    }
+
+    function targetOptions(targets, counts = null) {
+      return targets
+        .map((target) => `<option value="${target}">${target}${counts ? `（${counts.get(target)}ゲーム）` : ""}</option>`)
+        .join("");
+    }
+
+    // ---------- 判定 ----------
+
+    // x: 右が正, y: 上が正（mm）。座標が無い場合はボード外扱い
+    function classifyThrow(x, y) {
+      if (x === null || y === null) {
+        return { number: null, ring: "OUT", score: 0 };
+      }
+      const distance = Math.hypot(x, y);
+      const angle = (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
+      const number = NUMBER_ORDER[Math.floor(((angle + 9) % 360) / 18)];
+
+      if (distance <= BOARD.outerBull) {
+        return { number: null, ring: distance <= BOARD.innerBull ? "IB" : "OB", score: 50 };
+      }
+      if (distance < BOARD.tripleIn) return { number, ring: "IS", score: number };
+      if (distance <= BOARD.tripleOut) return { number, ring: "T", score: number * 3 };
+      if (distance < BOARD.doubleIn) return { number, ring: "OS", score: number };
+      if (distance <= BOARD.doubleOut) return { number, ring: "D", score: number * 2 };
+      return { number, ring: "OUT", score: 0 };
+    }
+
+    function throwLabel(item) {
+      switch (item.ring) {
+        case "IB":
+        case "OB":
+          return "BULL";
+        case "T":
+          return `T${item.number}`;
+        case "D":
+          return `D${item.number}`;
+        case "OUT":
+          return "OUT";
+        default:
+          return String(item.number);
+      }
+    }
+
+    // ---------- 狙い ----------
+
+    // 狙いのナンバー（BULL は null）
+    function targetNumber(target) {
+      return target === "BULL" ? null : Number(target.slice(1));
+    }
+
+    // 狙った場所の中心（x: 右が正, y: 上が正, mm）
+    function targetPoint(target) {
+      const number = targetNumber(target);
+      if (number === null) return { x: 0, y: 0 };
+      const rad = NUMBER_ORDER.indexOf(number) * 18 * Math.PI / 180;
+      return { x: TRIPLE_CENTER_RADIUS * Math.sin(rad), y: TRIPLE_CENTER_RADIUS * Math.cos(rad) };
+    }
+
+    function targetName(target) {
+      return target === "BULL" ? "ブル" : target;
+    }
+
+    // 狙った区画そのものに入ったか（BULL ならインナー・アウターどちらのブルでも可）
+    function isTargetHit(item, target) {
+      const number = targetNumber(target);
+      if (number === null) return item.ring === "IB" || item.ring === "OB";
+      return item.ring === "T" && item.number === number;
+    }
+
+    function gameTarget(game) {
+      return game.target || "BULL";
+    }
+
+    // 狙った区画そのものを塗り替えて示す（投げの点より下に描く）
+    function plotTarget(layer, target) {
+      const wire = { stroke: "#94a3b8", "stroke-width": 0.6 };
+      const number = targetNumber(target);
+      if (number === null) {
+        layer.appendChild(svgEl("circle", { cx: 0, cy: 0, r: BOARD.outerBull, fill: TARGET_FILL_COLOR, ...wire }));
+        layer.appendChild(svgEl("circle", { cx: 0, cy: 0, r: BOARD.innerBull, fill: BOARD_COLORS.black, ...wire }));
+        return;
+      }
+      const center = NUMBER_ORDER.indexOf(number) * 18;
+      layer.appendChild(svgEl("path", { d: sectorPath(BOARD.tripleIn, BOARD.tripleOut, center - 9, center + 9), fill: TARGET_FILL_COLOR, ...wire }));
+    }
+
+    // ---------- ボードの描画 ----------
+
+    // 時計回り（真上が0°）の角度と半径を SVG 座標に変換
+    function polar(radius, degree) {
+      const rad = degree * Math.PI / 180;
+      return [radius * Math.sin(rad), -radius * Math.cos(rad)];
+    }
+
+    function svgEl(tag, attrs) {
+      const el = document.createElementNS(SVG_NS, tag);
+      Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+      return el;
+    }
+
+    function sectorPath(innerRadius, outerRadius, startDeg, endDeg) {
+      const [x1, y1] = polar(outerRadius, startDeg);
+      const [x2, y2] = polar(outerRadius, endDeg);
+      const [x3, y3] = polar(innerRadius, endDeg);
+      const [x4, y4] = polar(innerRadius, startDeg);
+      return `M${x1} ${y1} A${outerRadius} ${outerRadius} 0 0 1 ${x2} ${y2} L${x3} ${y3} A${innerRadius} ${innerRadius} 0 0 0 ${x4} ${y4} Z`;
+    }
+
+    function drawBoard(svg) {
+      svg.innerHTML = "";
+      const wire = { stroke: "#94a3b8", "stroke-width": 0.6 };
+      svg.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 200, fill: "#0b0f19" }));
+
+      NUMBER_ORDER.forEach((number, index) => {
+        const start = index * 18 - 9;
+        const end = index * 18 + 9;
+        const single = index % 2 === 0 ? BOARD_COLORS.black : BOARD_COLORS.white;
+        const ring = index % 2 === 0 ? BOARD_COLORS.red : BOARD_COLORS.blue;
+        [
+          [BOARD.outerBull, BOARD.tripleIn, single],
+          [BOARD.tripleIn, BOARD.tripleOut, ring],
+          [BOARD.tripleOut, BOARD.doubleIn, single],
+          [BOARD.doubleIn, BOARD.doubleOut, ring]
+        ].forEach(([inner, outer, fill]) => {
+          svg.appendChild(svgEl("path", { d: sectorPath(inner, outer, start, end), fill, ...wire }));
+        });
+
+        const [tx, ty] = polar(185, index * 18);
+        const text = svgEl("text", {
+          x: tx, y: ty, fill: "#f8fafc", "font-size": 15, "font-weight": 700,
+          "text-anchor": "middle", "dominant-baseline": "central"
+        });
+        text.textContent = number;
+        svg.appendChild(text);
+      });
+
+      svg.appendChild(svgEl("circle", { cx: 0, cy: 0, r: BOARD.outerBull, fill: BOARD_COLORS.red, ...wire }));
+      svg.appendChild(svgEl("circle", { cx: 0, cy: 0, r: BOARD.innerBull, fill: BOARD_COLORS.black, ...wire }));
+
+      const markers = svgEl("g", {});
+      svg.appendChild(markers);
+      return markers;
+    }
+
+    // ---------- 入力 ----------
+
+    function addThrow(x, y) {
+      if (throws.length >= TOTAL_DARTS) return;
+      const index = throws.length;
+      throws.push({
+        round: Math.floor(index / DARTS_PER_ROUND) + 1,
+        dart: (index % DARTS_PER_ROUND) + 1,
+        x,
+        y,
+        ...classifyThrow(x, y)
+      });
+      saveInProgress();
+      renderInput();
+    }
+
+    inputBoardEl.addEventListener("click", (event) => {
+      const point = inputBoardEl.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      const boardPoint = point.matrixTransform(inputBoardEl.getScreenCTM().inverse());
+      addThrow(Math.round(boardPoint.x * 10) / 10, Math.round(-boardPoint.y * 10) / 10);
+    });
+
+    missBtn.addEventListener("click", () => addThrow(null, null));
+
+    undoBtn.addEventListener("click", () => {
+      throws.pop();
+      saveInProgress();
+      renderInput();
+    });
+
+    resetBtn.addEventListener("click", () => {
+      if (!throws.length || !confirm("入力中のゲームを消去しますか？")) return;
+      throws = [];
+      noteEl.value = "";
+      saveInProgress();
+      renderInput();
+    });
+
+    function renderInput() {
+      const finished = throws.length >= TOTAL_DARTS;
+      const nextIndex = Math.min(throws.length, TOTAL_DARTS - 1);
+      const currentRound = Math.floor(nextIndex / DARTS_PER_ROUND) + 1;
+      const total = throws.reduce((sum, item) => sum + item.score, 0);
+      const roundTotal = throws
+        .filter((item) => item.round === currentRound)
+        .reduce((sum, item) => sum + item.score, 0);
+
+      currentRoundEl.textContent = `${currentRound} / ${ROUNDS}`;
+      currentDartEl.textContent = finished ? "終了" : `${(nextIndex % DARTS_PER_ROUND) + 1} / ${DARTS_PER_ROUND}`;
+      roundScoreEl.textContent = roundTotal;
+      totalScoreEl.textContent = total;
+
+      undoBtn.disabled = !throws.length;
+      resetBtn.disabled = !throws.length;
+      missBtn.disabled = finished;
+      savePanel.classList.toggle("hidden", !finished);
+
+      // 今のラウンドは黄色、それ以前は水色で表示。狙った区画は蛍光の緑で塗る
+      inputMarkersLayer.innerHTML = "";
+      plotTarget(inputMarkersLayer, inputTarget);
+      throws.forEach((item) => {
+        if (item.x === null) return;
+        const isCurrent = item.round === currentRound;
+        inputMarkersLayer.appendChild(svgEl("circle", {
+          cx: item.x, cy: -item.y, r: isCurrent ? 5 : 3.5,
+          fill: isCurrent ? MARKER_COLORS.current : MARKER_COLORS.past,
+          stroke: "#0b0f19", "stroke-width": 1.5
+        }));
+      });
+
+      throwsTableEl.innerHTML = Array.from({ length: ROUNDS }, (_, roundIndex) => {
+        const round = roundIndex + 1;
+        const roundThrows = throws.filter((item) => item.round === round);
+        const cells = Array.from({ length: DARTS_PER_ROUND }, (_, dartIndex) => {
+          const item = roundThrows[dartIndex];
+          return `<td>${item ? `${throwLabel(item)} <span class="text-slate-400">(${item.score})</span>` : ""}</td>`;
+        }).join("");
+        const sum = roundThrows.reduce((acc, item) => acc + item.score, 0);
+        const rowClass = round === currentRound && !finished ? "bg-slate-800/80" : "";
+        return `<tr class="${rowClass}"><td>${round}</td>${cells}<td class="text-right font-semibold">${roundThrows.length ? sum : ""}</td></tr>`;
+      }).join("");
+    }
+
+    saveBtn.addEventListener("click", async () => {
+      if (!supabaseClient) {
+        setStatus("Supabaseクライアントを初期化できませんでした。", true);
+        return;
+      }
+      if (throws.length < TOTAL_DARTS) return;
+
+      saveBtn.disabled = true;
+      setStatus("保存中...");
+      const { error } = await supabaseClient.rpc(SAVE_FUNCTION, {
+        p_note: noteEl.value.trim(),
+        p_throws: throws,
+        p_target: inputTarget
+      });
+      saveBtn.disabled = false;
+
+      if (error) {
+        // 「狙い」を追加する SQL がまだ実行されていない場合
+        const hint = /p_target|save_darts_game/.test(error.message || "")
+          ? "（Supabase で sql/darts_target_migration.sql を実行してください）"
+          : "";
+        setStatus(`保存に失敗しました: ${error.message}${hint}`, true);
+        return;
+      }
+
+      const total = throws.reduce((sum, item) => sum + item.score, 0);
+      throws = [];
+      noteEl.value = "";
+      saveInProgress();
+      renderInput();
+      setStatus(`保存しました（${targetName(inputTarget)}狙い・${total}点）。`);
+      // 保存直後は、比較を「1つ前のゲーム（A）」と「今保存したゲーム（B）」にする
+      await loadHistory({ compareLatest: true });
+    });
+
+    // ---------- 分析 ----------
+
+    async function fetchAll(buildQuery) {
+      const rows = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await buildQuery().range(from, from + PAGE_SIZE - 1);
+        if (error) throw error;
+        rows.push(...data);
+        if (data.length < PAGE_SIZE) return rows;
+      }
+    }
+
+    function formatDateTime(value) {
+      const date = new Date(value);
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${date.getMonth() + 1}/${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    function formatRate(count, total) {
+      if (!total) return "-";
+      return `${count}/${total}本（${Math.round(count / total * 100)}%）`;
+    }
+
+    // スタッツは DARTSLIVE と同じく1ラウンドあたりの平均点（PPR）
+    function formatStats(totalScore) {
+      return (totalScore / ROUNDS).toFixed(2);
+    }
+
+    function formatFlips(stats) {
+      if (!stats.flipPairs) return "-";
+      return `${stats.flips}/${stats.flipPairs}回`;
+    }
+
+    function describeOffset(meanX, meanY, fallback = "ほぼ中心") {
+      const horizontal = Math.abs(meanX) < 1 ? "" : `${meanX > 0 ? "右" : "左"}${Math.round(Math.abs(meanX))}mm`;
+      const vertical = Math.abs(meanY) < 1 ? "" : `${meanY > 0 ? "上" : "下"}${Math.round(Math.abs(meanY))}mm`;
+      return [horizontal, vertical].filter(Boolean).join("・") || fallback;
+    }
+
+    // options.compareLatest: true なら、比較の選択を最新2ゲームに戻す（イベントから呼ばれたときは Event が渡るので無視される）
+    async function loadHistory(options = {}) {
+      if (!supabaseClient) {
+        setStatus("Supabaseクライアントを初期化できませんでした。", true);
+        return;
+      }
+
+      try {
+        refreshBtn.disabled = true;
+        games = numberGamesByTarget(await fetchGames());
+
+        // 推移グラフでゲームごとの指標を出すため、全ゲームの投げをまとめて取得する（1ゲーム24本なので軽い）
+        const allThrows = games.length
+          ? await fetchAll(() => supabaseClient
+            .from(THROWS_TABLE)
+            .select("game_id, round, dart, x, y, number, ring, score")
+            .order("id", { ascending: true }))
+          : [];
+        throwsByGame.clear();
+        games.forEach((game) => throwsByGame.set(game.id, []));
+        allThrows.forEach((row) => {
+          if (throwsByGame.has(row.game_id)) throwsByGame.get(row.game_id).push(row);
+        });
+
+        renderAnalysisTargetOptions(options.compareLatest === true);
+        renderAnalysis();
+        renderTrendChart();
+        renderGamesTable();
+        renderCompareOptions(options.compareLatest === true);
+        await loadComparison();
+        if (!statusEl.textContent.startsWith("保存しました")) {
+          setStatus(games.length ? `${games.length}ゲームを読み込みました。` : "保存されたゲームはまだありません。");
+        }
+      } catch (error) {
+        setStatus(`読み込みに失敗しました: ${error.message}`, true);
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    }
+
+    // 「狙い」の列を足す SQL を実行する前でも動くように、列が無ければ全ゲームを BULL として読む
+    async function fetchGames() {
+      const query = (columns) => fetchAll(() => supabaseClient
+        .from(GAMES_TABLE)
+        .select(columns)
+        .order("played_at", { ascending: true }));
+      try {
+        return await query("id, played_at, total_score, note, target");
+      } catch (error) {
+        if (!/target/.test(error.message || "")) throw error;
+        const rows = await query("id, played_at, total_score, note");
+        return rows.map((row) => ({ ...row, target: "BULL" }));
+      }
+    }
+
+    // データベースの id は保存に失敗すると飛ぶことがあるので、表示には狙いごとの通し番号（古い順に 1 から）を使う
+    function numberGamesByTarget(rows) {
+      const counters = new Map();
+      return rows.map((row) => {
+        const target = gameTarget(row);
+        const seq = (counters.get(target) || 0) + 1;
+        counters.set(target, seq);
+        return { ...row, seq };
+      });
+    }
+
+    function gameNo(game) {
+      return `${gameTarget(game)} #${game.seq}`;
+    }
+
+    // 分析の狙いの選択肢は、実際に投げたことのある狙いだけにする。
+    // 初回と保存直後は最新ゲームの狙い、それ以外は選んでいた狙いを保つ
+    function renderAnalysisTargetOptions(useLatest = false) {
+      const counts = new Map();
+      games.forEach((game) => counts.set(gameTarget(game), (counts.get(gameTarget(game)) || 0) + 1));
+      const available = TARGETS.filter((target) => counts.has(target));
+      const previous = useLatest ? "" : analysisTargetEl.value;
+      analysisTargetEl.innerHTML = targetOptions(available, counts);
+      const latest = games.length ? gameTarget(games[games.length - 1]) : "BULL";
+      analysisTargetEl.value = available.includes(previous) ? previous : latest;
+    }
+
+    function gamesForAnalysisTarget() {
+      return games.filter((game) => gameTarget(game) === analysisTargetEl.value);
+    }
+
+    // items の位置を、狙った場所（target）を原点にした座標に直して集計する。
+    // 平均のずれ・外れ幅・距離・行ったり来たり・下の本数は狙いが基準になり、ブレ幅とまとまりは狙いに関係しない
+    function computeStats(items, target = "BULL") {
+      const origin = targetPoint(target);
+      const number = targetNumber(target);
+      const located = items
+        .filter((item) => item.x !== null && item.y !== null)
+        .map((item) => ({ ...item, x: item.x - origin.x, y: item.y - origin.y }));
+      const mean = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
+      const stats = {
+        count: items.length,
+        score: items.reduce((sum, item) => sum + item.score, 0),
+        hit: items.filter((item) => isTargetHit(item, target)).length,
+        // トリプルを狙ったときに、狙ったナンバー（シングル・ダブル含む）に入った本数
+        numberHit: number === null ? null : items.filter((item) => item.number === number).length,
+        out: items.filter((item) => item.ring === "OUT").length,
+        origin,
+        located
+      };
+      if (!located.length) return stats;
+
+      const meanX = mean(located.map((item) => item.x));
+      const meanY = mean(located.map((item) => item.y));
+
+      // 同じゲーム・同じラウンドの投げをまとめる（ラウンド内のまとまりと、続けて投げた2本の比較に使う）
+      const rounds = new Map();
+      located.forEach((item) => {
+        const key = `${item.game_id}-${item.round}`;
+        if (!rounds.has(key)) rounds.set(key, []);
+        rounds.get(key).push(item);
+      });
+      const groupDistances = [];
+      let flips = 0;
+      let flipPairs = 0;
+      rounds.forEach((roundItems) => {
+        if (roundItems.length < 2) return;
+        const centerX = mean(roundItems.map((item) => item.x));
+        const centerY = mean(roundItems.map((item) => item.y));
+        roundItems.forEach((item) => groupDistances.push(Math.hypot(item.x - centerX, item.y - centerY)));
+
+        const ordered = roundItems.slice().sort((a, b) => a.dart - b.dart);
+        ordered.slice(1).forEach((item, index) => {
+          const previous = ordered[index];
+          // ほぼ中央の投げは左右どちらとも言えないので数えない
+          if (Math.abs(previous.x) <= FLIP_CENTER_MARGIN || Math.abs(item.x) <= FLIP_CENTER_MARGIN) return;
+          flipPairs += 1;
+          if ((previous.x > 0) !== (item.x > 0)) flips += 1;
+        });
+      });
+
+      return {
+        ...stats,
+        meanX,
+        meanY,
+        // 平均のずれは左右に打ち消し合うので、向きを無視した「外れ幅」も出す
+        absX: mean(located.map((item) => Math.abs(item.x))),
+        absY: mean(located.map((item) => Math.abs(item.y))),
+        grouping: groupDistances.length ? mean(groupDistances) : null,
+        flips,
+        flipPairs,
+        meanDistance: mean(located.map((item) => Math.hypot(item.x, item.y))),
+        // ブレ幅：平均の位置からの離れ具合（狙いの偏りを除いた、投げごとのバラつき）
+        devX: mean(located.map((item) => Math.abs(item.x - meanX))),
+        devY: mean(located.map((item) => Math.abs(item.y - meanY))),
+        below: located.filter((item) => item.y < 0).length
+      };
+    }
+
+    // 1本ずつの点を描く（shape: "circle" または "diamond"）
+    function plotThrows(layer, items, color, shape = "circle", label = "") {
+      items.forEach((item) => {
+        if (item.x === null || item.y === null) return;
+        const common = { fill: color, "fill-opacity": 0.85, stroke: "#0b0f19", "stroke-width": 1.5 };
+        const marker = shape === "diamond"
+          ? svgEl("path", { d: `M${item.x} ${-item.y - 5.5} L${item.x + 5.5} ${-item.y} L${item.x} ${-item.y + 5.5} L${item.x - 5.5} ${-item.y} Z`, ...common })
+          : svgEl("circle", { cx: item.x, cy: -item.y, r: 4, ...common });
+        const title = svgEl("title", {});
+        title.textContent = `${label}R${item.round}-${item.dart}本目: ${throwLabel(item)}（${item.score}点）`;
+        marker.appendChild(title);
+        layer.appendChild(marker);
+      });
+    }
+
+    // 平均の位置に×を描く。濃い縁取りで、どの色の区画の上でも見えるようにする
+    function plotMeanCross(layer, x, y, color) {
+      const size = 8;
+      const d = `M${x - size} ${-y - size} L${x + size} ${-y + size} M${x - size} ${-y + size} L${x + size} ${-y - size}`;
+      layer.appendChild(svgEl("path", { d, stroke: "#0b0f19", "stroke-width": 6, "stroke-linecap": "round" }));
+      layer.appendChild(svgEl("path", { d, stroke: color, "stroke-width": 3.5, "stroke-linecap": "round" }));
+    }
+
+    function formatHit(stats, target) {
+      const hit = formatRate(stats.hit, stats.count);
+      if (stats.numberHit === null) return hit;
+      return `${hit}<span class="block text-sm font-semibold text-slate-300">${targetNumber(target)}に入った ${formatRate(stats.numberHit, stats.count)}</span>`;
+    }
+
+    function renderAnalysis() {
+      const target = analysisTargetEl.value || "BULL";
+      const targetAll = gamesForAnalysisTarget();
+      const mode = rangeModeEl.value;
+      const targetGames = mode === "all" ? targetAll : targetAll.slice(-Number(mode));
+      const targetThrows = targetGames.flatMap((game) => throwsByGame.get(game.id) || []);
+      const stats = computeStats(targetThrows, target);
+      const average = targetGames.length
+        ? targetGames.reduce((sum, game) => sum + game.total_score, 0) / targetGames.length
+        : null;
+
+      statAverageEl.innerHTML = average === null
+        ? "-"
+        : `${Math.round(average)}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">スタッツ ${formatStats(average)}</span>`;
+      statHitLabelEl.textContent = `的中（${targetName(target)}）`;
+      statHitEl.innerHTML = stats.count ? formatHit(stats, target) : "-";
+      statOutEl.textContent = formatRate(stats.out, stats.count);
+      statOffsetEl.innerHTML = stats.located.length ? offsetLines(stats.meanX, stats.meanY) : "-";
+      statDistanceEl.textContent = stats.located.length ? `${Math.round(stats.meanDistance)}mm` : "-";
+      statAbsEl.innerHTML = stats.located.length ? wrapParts([`横${Math.round(stats.absX)}mm`, `縦${Math.round(stats.absY)}mm`]) : "-";
+      statDevEl.innerHTML = stats.located.length ? wrapParts([`横${Math.round(stats.devX)}mm`, `縦${Math.round(stats.devY)}mm`]) : "-";
+      statGroupingEl.textContent = stats.grouping === null || stats.grouping === undefined ? "-" : `${Math.round(stats.grouping)}mm`;
+      statFlipsEl.textContent = formatFlips(stats);
+
+      analysisMarkersLayer.innerHTML = "";
+      plotTarget(analysisMarkersLayer, target);
+      plotThrows(analysisMarkersLayer, targetThrows, MARKER_COLORS.past);
+      // 平均のずれは狙いからの値なので、ボード上では狙いの位置に足して描く
+      if (stats.located.length) plotMeanCross(analysisMarkersLayer, stats.origin.x + stats.meanX, stats.origin.y + stats.meanY, "#f472b6");
+
+      plotCaptionEl.textContent = targetGames.length ? `（${targetName(target)}狙い・${targetGames.length}ゲーム・${stats.count}本）` : "";
+    }
+
+    // ---------- ゲーム比較 ----------
+
+    function gameOptionLabel(game) {
+      return `${gameNo(game)}　${formatDateTime(game.played_at)}　${game.total_score}点`;
+    }
+
+    // 比較は、分析欄で選んでいる狙いのゲーム同士で行う
+    function renderCompareOptions(useLatest = false) {
+      const previousA = useLatest ? "" : compareAEl.value;
+      const previousB = useLatest ? "" : compareBEl.value;
+      const candidates = gamesForAnalysisTarget();
+      const options = candidates.slice().reverse()
+        .map((game) => `<option value="${game.id}">${escapeHtml(gameOptionLabel(game))}</option>`)
+        .join("");
+      compareAEl.innerHTML = options;
+      compareBEl.innerHTML = options;
+
+      const ids = candidates.map((game) => String(game.id));
+      // 初期値（と保存直後）は A = 1つ前のゲーム、B = 最新ゲーム。それ以外は選んでいたゲームを保つ
+      compareAEl.value = ids.includes(previousA) ? previousA : (ids[ids.length - 2] || ids[ids.length - 1] || "");
+      compareBEl.value = ids.includes(previousB) ? previousB : (ids[ids.length - 1] || "");
+    }
+
+    async function fetchThrowsForGames(gameIds) {
+      const missing = gameIds.filter((id) => !throwsByGame.has(id));
+      if (missing.length) {
+        const rows = await fetchAll(() => supabaseClient
+          .from(THROWS_TABLE)
+          .select("game_id, round, dart, x, y, number, ring, score")
+          .in("game_id", missing)
+          .order("id", { ascending: true }));
+        missing.forEach((id) => throwsByGame.set(id, []));
+        rows.forEach((row) => throwsByGame.get(row.game_id).push(row));
+      }
+      return gameIds.map((id) => throwsByGame.get(id));
+    }
+
+    function formatDiff(value, unit = "", digits = 0) {
+      if (value === null || Number.isNaN(value)) return "-";
+      const rounded = Number(value.toFixed(digits));
+      if (rounded === 0) return `±0${unit}`;
+      return `${rounded > 0 ? "+" : ""}${rounded}${unit}`;
+    }
+
+    // 比較表は列が細いので、ずれや割合を2行に分けて表示する
+    // 横幅に余裕があれば1行、狭ければ値の切れ目で折り返して2行にする
+    function wrapParts(parts) {
+      return parts
+        .map((part, index) => `<span class="inline-block whitespace-nowrap${index < parts.length - 1 ? " mr-1.5" : ""}">${part}</span>`)
+        .join("");
+    }
+
+    function offsetLines(x, y, fallback) {
+      return wrapParts(describeOffset(x, y, fallback).split("・"));
+    }
+
+    function rateLines(count, total) {
+      if (!total) return "-";
+      return `${count}/${total}本<br><span class="text-xs text-slate-400">${Math.round(count / total * 100)}%</span>`;
+    }
+
+    function compareRow(label, a, b, diff = "") {
+      return `<tr><th class="whitespace-nowrap font-semibold text-slate-300">${label}</th><td>${a}</td><td>${b}</td><td>${diff}</td></tr>`;
+    }
+
+    async function loadComparison() {
+      compareMarkersLayer.innerHTML = "";
+      const gameA = games.find((game) => String(game.id) === compareAEl.value);
+      const gameB = games.find((game) => String(game.id) === compareBEl.value);
+      const message = !gameA || !gameB
+        ? "比較するゲームがありません。"
+        : gamesForAnalysisTarget().length < 2
+          ? `${targetName(analysisTargetEl.value)}狙いのゲームがまだ1つなので、比較できません。もう1ゲーム投げると比べられます。`
+          : "";
+      if (message) {
+        compareNotesEl.innerHTML = "";
+        compareTableEl.innerHTML = `<tr><td colspan="4" class="text-slate-400">${message}</td></tr>`;
+        compareDartTableEl.innerHTML = "";
+        return;
+      }
+
+      try {
+        const [throwsA, throwsB] = await fetchThrowsForGames([gameA.id, gameB.id]);
+        renderComparison(gameA, throwsA, gameB, throwsB);
+      } catch (error) {
+        setStatus(`比較データの読み込みに失敗しました: ${error.message}`, true);
+      }
+    }
+
+    function renderComparison(gameA, throwsA, gameB, throwsB) {
+      const targetA = gameTarget(gameA);
+      const targetB = gameTarget(gameB);
+      const a = computeStats(throwsA, targetA);
+      const b = computeStats(throwsB, targetB);
+      const hasA = a.located.length > 0;
+      const hasB = b.located.length > 0;
+      const both = hasA && hasB;
+      const mm = (value) => `${Math.round(value)}mm`;
+
+      compareMarkersLayer.innerHTML = "";
+      plotTarget(compareMarkersLayer, targetA);
+      if (targetB !== targetA) plotTarget(compareMarkersLayer, targetB);
+      plotThrows(compareMarkersLayer, throwsA, COMPARE_COLORS.a, "circle", "A ");
+      plotThrows(compareMarkersLayer, throwsB, COMPARE_COLORS.b, "diamond", "B ");
+      // 平均のずれは狙いからの値なので、ボード上ではそれぞれの狙いの位置に足して描く
+      if (hasA) plotMeanCross(compareMarkersLayer, a.origin.x + a.meanX, a.origin.y + a.meanY, COMPARE_COLORS.a);
+      if (hasB) plotMeanCross(compareMarkersLayer, b.origin.x + b.meanX, b.origin.y + b.meanY, COMPARE_COLORS.b);
+
+      compareNotesEl.innerHTML = [["A", "●", "compare-swatch-a", gameA], ["B", "◆", "compare-swatch-b", gameB]]
+        .map(([name, mark, swatch, game]) => `
+          <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+            <p class="text-xs text-slate-300"><span class="${swatch}">${mark}</span> ${name}：${escapeHtml(gameOptionLabel(game))}</p>
+            <p class="mt-1 whitespace-pre-line text-sm text-slate-100">${escapeHtml(game.note || "（メモなし）")}</p>
+          </div>`).join("");
+
+      const rows = [
+        compareRow("スコア", `${gameA.total_score}点`, `${gameB.total_score}点`, formatDiff(gameB.total_score - gameA.total_score, "点")),
+        compareRow(`的中<br><span class="text-xs font-normal text-slate-400">${targetA === targetB ? targetA : `${targetA}／${targetB}`}</span>`,
+          rateLines(a.hit, a.count), rateLines(b.hit, b.count), formatDiff(b.hit - a.hit, "本")),
+        // どちらかがトリプル狙いのときだけ、狙ったナンバーに入った本数も並べる
+        ...(a.numberHit !== null || b.numberHit !== null
+          ? [compareRow("狙った<br>ナンバー",
+            a.numberHit !== null ? rateLines(a.numberHit, a.count) : "-",
+            b.numberHit !== null ? rateLines(b.numberHit, b.count) : "-",
+            a.numberHit !== null && b.numberHit !== null ? formatDiff(b.numberHit - a.numberHit, "本") : "-")]
+          : []),
+        compareRow("ボード外", rateLines(a.out, a.count), rateLines(b.out, b.count), formatDiff(b.out - a.out, "本")),
+        compareRow("平均のずれ",
+          hasA ? offsetLines(a.meanX, a.meanY) : "-",
+          hasB ? offsetLines(b.meanX, b.meanY) : "-",
+          both ? offsetLines(b.meanX - a.meanX, b.meanY - a.meanY, "ほぼ同じ") : "-"),
+        compareRow("外れ幅<br>横",
+          hasA ? mm(a.absX) : "-",
+          hasB ? mm(b.absX) : "-",
+          both ? formatDiff(b.absX - a.absX, "mm") : "-"),
+        compareRow("外れ幅<br>縦",
+          hasA ? mm(a.absY) : "-",
+          hasB ? mm(b.absY) : "-",
+          both ? formatDiff(b.absY - a.absY, "mm") : "-"),
+        compareRow("狙いからの<br>平均距離",
+          hasA ? mm(a.meanDistance) : "-",
+          hasB ? mm(b.meanDistance) : "-",
+          both ? formatDiff(b.meanDistance - a.meanDistance, "mm") : "-"),
+        compareRow("ブレ幅<br>横",
+          hasA ? mm(a.devX) : "-",
+          hasB ? mm(b.devX) : "-",
+          both ? formatDiff(b.devX - a.devX, "mm") : "-"),
+        compareRow("ブレ幅<br>縦",
+          hasA ? mm(a.devY) : "-",
+          hasB ? mm(b.devY) : "-",
+          both ? formatDiff(b.devY - a.devY, "mm") : "-"),
+        compareRow("ラウンド内の<br>まとまり",
+          hasA && a.grouping !== null ? mm(a.grouping) : "-",
+          hasB && b.grouping !== null ? mm(b.grouping) : "-",
+          both && a.grouping !== null && b.grouping !== null ? formatDiff(b.grouping - a.grouping, "mm") : "-"),
+        // 数えた組の数がゲームごとに違うので、回数ではなく割合の差で比べる
+        compareRow("左右の<br>行ったり<br>来たり",
+          hasA && a.flipPairs ? rateLines(a.flips, a.flipPairs).replace("本", "回") : "-",
+          hasB && b.flipPairs ? rateLines(b.flips, b.flipPairs).replace("本", "回") : "-",
+          both && a.flipPairs && b.flipPairs ? formatDiff((b.flips / b.flipPairs - a.flips / a.flipPairs) * 100, "pt") : "-"),
+        compareRow("狙いより<br>下",
+          hasA ? rateLines(a.below, a.located.length) : "-",
+          hasB ? rateLines(b.below, b.located.length) : "-",
+          both ? formatDiff(b.below - a.below, "本") : "-")
+      ];
+      compareTableEl.innerHTML = rows.join("");
+
+      compareDartTableEl.innerHTML = Array.from({ length: DARTS_PER_ROUND }, (_, index) => {
+        const dart = index + 1;
+        const da = computeStats(throwsA.filter((item) => item.dart === dart), targetA);
+        const db = computeStats(throwsB.filter((item) => item.dart === dart), targetB);
+        const offsetCell = (stats) => stats.located.length
+          ? `${offsetLines(stats.meanX, stats.meanY)}<br><span class="whitespace-nowrap text-xs text-slate-400">幅 ${Math.round(stats.absX)}・${Math.round(stats.absY)}mm</span>`
+          : "-";
+        const offsetA = offsetCell(da);
+        const offsetB = offsetCell(db);
+        const distance = da.located.length && db.located.length
+          ? `${Math.round(da.meanDistance)}→${Math.round(db.meanDistance)}<br><span class="text-xs text-slate-400">${formatDiff(db.meanDistance - da.meanDistance)}</span>`
+          : "-";
+        return `<tr><th class="whitespace-nowrap font-semibold text-slate-300">${dart}本目</th><td>${offsetA}</td><td>${offsetB}</td><td class="whitespace-nowrap">${distance}</td></tr>`;
+      }).join("");
+    }
+
+    // 推移グラフで選べる指標。value はゲームとその集計から値を返す（出せない場合は null）
+    const TREND_METRICS = {
+      score: { label: "スコア", unit: "点", digits: 0, value: (game) => game.total_score },
+      stats: { label: "スタッツ", unit: "", digits: 2, value: (game) => game.total_score / ROUNDS },
+      distance: { label: "狙いからの平均距離", unit: "mm", digits: 0, lowerIsBetter: true, value: (game, stats) => (stats.located.length ? stats.meanDistance : null) },
+      grouping: { label: "ラウンド内のまとまり", unit: "mm", digits: 0, lowerIsBetter: true, value: (game, stats) => stats.grouping ?? null },
+      absX: { label: "外れ幅（横）", unit: "mm", digits: 0, lowerIsBetter: true, value: (game, stats) => stats.absX ?? null },
+      absY: { label: "外れ幅（縦）", unit: "mm", digits: 0, lowerIsBetter: true, value: (game, stats) => stats.absY ?? null },
+      devX: { label: "ブレ幅（横）", unit: "mm", digits: 0, lowerIsBetter: true, value: (game, stats) => stats.devX ?? null },
+      devY: { label: "ブレ幅（縦）", unit: "mm", digits: 0, lowerIsBetter: true, value: (game, stats) => stats.devY ?? null },
+      meanX: { label: "平均のずれ（横）", unit: "mm", digits: 0, signed: true, caption: "プラスが右、マイナスが左。0 に近いほど偏りがありません。", value: (game, stats) => stats.meanX ?? null },
+      meanY: { label: "平均のずれ（縦）", unit: "mm", digits: 0, signed: true, caption: "プラスが上、マイナスが下。0 に近いほど偏りがありません。", value: (game, stats) => stats.meanY ?? null },
+      // キーは以前の「ブル」と同じ bull のまま（ブラウザに覚えた選択を引き継ぐため）。
+      // トリプル狙いのときは「狙ったナンバー」の線も同じグラフに描く（BULL 狙いでは値が無いので出ない）
+      bull: {
+        label: "的中", unit: "本", digits: 0,
+        series: [
+          { label: "的中", value: (game, stats) => stats.hit },
+          { label: "狙ったナンバー", value: (game, stats) => stats.numberHit }
+        ]
+      },
+      flips: { label: "左右の行ったり来たり", unit: "%", digits: 0, lowerIsBetter: true, value: (game, stats) => (stats.flipPairs ? stats.flips / stats.flipPairs * 100 : null) }
+    };
+
+    function initTrendMetricOptions() {
+      trendMetricEl.innerHTML = Object.entries(TREND_METRICS)
+        .map(([key, metric]) => `<option value="${key}">${metric.label}</option>`)
+        .join("");
+      let saved = null;
+      try {
+        saved = localStorage.getItem(TREND_METRIC_KEY);
+      } catch (error) {
+        // 保存できない環境ではスコアから表示する
+      }
+      trendMetricEl.value = TREND_METRICS[saved] ? saved : "score";
+    }
+
+    // animate: false のときはアニメーションなしで描く（画面の幅が変わって描き直すときなど）
+    function renderTrendChart({ animate = true } = {}) {
+      const metric = TREND_METRICS[trendMetricEl.value] || TREND_METRICS.score;
+      // 分析で選んだ狙いのゲームだけを並べる
+      const trendGames = gamesForAnalysisTarget();
+      const statsList = trendGames.map((game) => computeStats(throwsByGame.get(game.id) || [], gameTarget(game)));
+      const seriesList = metric.series || [{ label: metric.label, value: metric.value }];
+      const datasets = seriesList
+        .map((series, index) => {
+          const color = TREND_SERIES_COLORS[index];
+          const data = trendGames.map((game, gameIndex) => {
+            const value = series.value(game, statsList[gameIndex]);
+            return value === null || value === undefined ? null : Number(value.toFixed(metric.digits));
+          });
+          return {
+            label: series.label, data, borderColor: color, backgroundColor: color,
+            borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, spanGaps: true, tension: 0
+          };
+        })
+        // 値が1つも無い線（BULL 狙いの「狙ったナンバー」など）は出さない
+        .filter((dataset) => dataset.data.some((value) => value !== null));
+      const formatValue = (value) => `${metric.signed && value > 0 ? "+" : ""}${value.toFixed(metric.digits)}${metric.unit}`;
+
+      const metricCaption = metric.caption || (metric.lowerIsBetter ? "低いほど良い指標です。" : "");
+      trendCaptionEl.textContent = `${targetName(analysisTargetEl.value || "BULL")}狙いのゲームだけを表示しています。${metricCaption}`;
+
+      // ゲーム数に合わせてグラフの横幅を決める。画面に収まらないときは横にスクロールする
+      lastTrendWidth = trendScrollEl.clientWidth;
+      const neededWidth = trendGames.length * TREND_POINT_WIDTH + TREND_AXIS_ALLOWANCE;
+      const scrollable = neededWidth > trendScrollEl.clientWidth;
+      trendInnerEl.style.width = scrollable ? `${neededWidth}px` : "100%";
+      trendAxisEl.classList.toggle("hidden", !scrollable);
+
+      pinnedTrendIndex = null;
+      if (scoreChart) scoreChart.destroy();
+      scoreChart = new Chart(scoreChartEl, {
+        plugins: [{
+          // 描くたびに、縦軸の目盛りの部分を左の canvas に写す（横にスクロールしても目盛りが見える）
+          id: "stickyYAxis",
+          afterRender(chart) {
+            if (trendAxisEl.classList.contains("hidden") || !chart.chartArea) return;
+            const ratio = chart.currentDevicePixelRatio || window.devicePixelRatio || 1;
+            // 写すのは縦軸の目盛りの部分だけ（グラフの点や横軸の日付が混ざらないよう、少し内側で切る）
+            const axisWidth = Math.max(0, Math.floor(chart.scales.y.right) - 6);
+            const height = Math.ceil(chart.chartArea.bottom) + 1;
+            trendAxisEl.width = axisWidth * ratio;
+            trendAxisEl.height = height * ratio;
+            trendAxisEl.style.width = `${axisWidth}px`;
+            trendAxisEl.style.height = `${height}px`;
+            const context = trendAxisEl.getContext("2d");
+            context.fillStyle = TREND_AXIS_BACKGROUND;
+            context.fillRect(0, 0, trendAxisEl.width, trendAxisEl.height);
+            context.drawImage(chart.canvas, 0, 0, axisWidth * ratio, height * ratio, 0, 0, axisWidth * ratio, height * ratio);
+          }
+        }],
+        type: "line",
+        data: {
+          labels: trendGames.map((game) => formatDateTime(game.played_at)),
+          datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: animate ? undefined : false,
+          interaction: { mode: "index", intersect: false },
+          // タッチは click として受け取る（touchstart / touchmove を外すと、横スクロール中に表示が出たり消えたりしない）
+          events: ["mousemove", "mouseout", "click"],
+          // タップで表示、同じゲームをもう一度タップで消す、別のゲームならそちらを表示
+          onClick: (event, elements, chart) => toggleTrendTooltip(event, chart),
+          plugins: {
+            // 線が2本以上のときだけ凡例を出す
+            legend: {
+              display: datasets.length > 1,
+              position: "top",
+              align: "start",
+              labels: { color: "#cbd5e1", boxWidth: 12, boxHeight: 2 }
+            },
+            tooltip: {
+              // タップ（click）での表示・非表示は toggleTrendTooltip で行う。ツールチップ側も click を処理すると、消した直後に出し直してしまう
+              events: ["mousemove", "mouseout"],
+              callbacks: {
+                title: (items) => `${gameNo(trendGames[items[0].dataIndex])}　${items[0].label}`,
+                label: (item) => `${item.dataset.label}: ${formatValue(item.parsed.y)}`
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true }, grid: { display: false } },
+            y: {
+              // 整数で表す指標（ブルの本数など）は 0.5 のような目盛りを出さない
+              ticks: { color: "#94a3b8", precision: metric.digits === 0 ? 0 : undefined, callback: (value) => `${value}${metric.unit}` },
+              // 符号付きの指標は 0 の線を目立たせる
+              grid: { color: (context) => (metric.signed && context.tick.value === 0 ? "rgba(148, 163, 184, 0.6)" : "rgba(148, 163, 184, 0.15)") },
+              // どの指標も 0 を範囲に含める（符号付きの指標で全部マイナスでも 0 の線が見えるように）
+              suggestedMin: 0,
+              suggestedMax: metric.signed ? 0 : undefined
+            }
+          }
+        }
+      });
+      // 最新のゲームが見えるよう、右端までスクロールしておく
+      trendScrollEl.scrollLeft = trendScrollEl.scrollWidth;
+    }
+
+    // 分析で選んだ狙いのゲームだけを一覧にする
+    // 推移グラフの点の表示（ツールチップ）を、タップで出したり消したりする
+    let pinnedTrendIndex = null;
+
+    function hideTrendTooltip(chart) {
+      chart.setActiveElements([]);
+      chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+      chart.update("none");
+      pinnedTrendIndex = null;
+    }
+
+    function toggleTrendTooltip(event, chart) {
+      const points = chart.getElementsAtEventForMode(event, "index", { intersect: false }, true);
+      if (!points.length) return;
+      const index = points[0].index;
+      if (pinnedTrendIndex === index) {
+        hideTrendTooltip(chart);
+        return;
+      }
+      const active = points.map((point) => ({ datasetIndex: point.datasetIndex, index: point.index }));
+      chart.setActiveElements(active);
+      chart.tooltip.setActiveElements(active, { x: event.x, y: event.y });
+      chart.update("none");
+      pinnedTrendIndex = index;
+    }
+
+    // グラフの外をタップしたら表示を消す
+    document.addEventListener("click", (event) => {
+      if (scoreChart && !scoreChartEl.contains(event.target) && scoreChart.tooltip.getActiveElements().length) {
+        hideTrendTooltip(scoreChart);
+      }
+    });
+
+    // 画面の幅が変わったら、推移グラフの横幅を計算し直す。
+    // iPhone ではページをスクロールするとアドレスバーの出入りで resize が来るが、高さが変わるだけなので描き直さない
+    let lastTrendWidth = 0;
+    let trendResizeTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(trendResizeTimer);
+      trendResizeTimer = setTimeout(() => {
+        if (!scoreChart || trendScrollEl.clientWidth === lastTrendWidth) return;
+        renderTrendChart({ animate: false });
+      }, 200);
+    });
+
+    function renderGamesTable() {
+      const listed = gamesForAnalysisTarget();
+      if (!listed.length) {
+        gamesTableEl.innerHTML = `<tr><td colspan="5" class="text-slate-400">まだ記録がありません。</td></tr>`;
+        return;
+      }
+      // メモは改行を「／」にして1行にまとめ、行が縦に伸びないようにする（長いメモは表を横スクロールして読む）
+      gamesTableEl.innerHTML = listed.slice().reverse().map((game) => `
+        <tr>
+          <td class="whitespace-nowrap">${formatDateTime(game.played_at)}</td>
+          <td class="whitespace-nowrap">${gameNo(game)}</td>
+          <td class="text-right font-semibold">${game.total_score}</td>
+          <td class="text-right">${formatStats(game.total_score)}</td>
+          <td class="whitespace-nowrap">${escapeHtml((game.note || "").replace(/\s*\n\s*/g, " ／ "))}</td>
+        </tr>`).join("");
+    }
+
+    rangeModeEl.addEventListener("change", renderAnalysis);
+    analysisTargetEl.addEventListener("change", () => {
+      renderAnalysis();
+      renderTrendChart();
+      renderGamesTable();
+      // 狙いを切り替えたら、比較もその狙いの最新2ゲームにする
+      renderCompareOptions(true);
+      loadComparison();
+    });
+    trendMetricEl.addEventListener("change", () => {
+      try {
+        localStorage.setItem(TREND_METRIC_KEY, trendMetricEl.value);
+      } catch (error) {
+        // 保存できなくても表示は切り替わる
+      }
+      renderTrendChart();
+    });
+    compareAEl.addEventListener("change", loadComparison);
+    compareBEl.addEventListener("change", loadComparison);
+    compareSwapBtn.addEventListener("click", () => {
+      [compareAEl.value, compareBEl.value] = [compareBEl.value, compareAEl.value];
+      loadComparison();
+    });
+    refreshBtn.addEventListener("click", loadHistory);
+    inputTargetEl.addEventListener("change", () => {
+      inputTarget = inputTargetEl.value;
+      saveInputTarget();
+      renderInput();
+    });
+
+    inputMarkersLayer = drawBoard(inputBoardEl);
+    analysisMarkersLayer = drawBoard(analysisBoardEl);
+    compareMarkersLayer = drawBoard(compareBoardEl);
+    initTrendMetricOptions();
+    inputTargetEl.innerHTML = targetOptions(TARGETS);
+    inputTargetEl.value = inputTarget;
+    renderInput();
+    loadHistory();
+  </script>
+
+  <!-- 相談チャット（chat.html を埋め込む。会話やログインは単独のページと共通） -->
+  <button id="chat-dock-fab" class="chat-dock-fab rounded-full bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg hover:bg-blue-700" aria-controls="chat-dock" aria-expanded="false">Chat</button>
+  <aside id="chat-dock" class="chat-dock" aria-label="相談チャット" aria-hidden="true">
+    <div class="flex items-center justify-between gap-2 border-b border-slate-700 px-4 py-2">
+      <h2 class="text-base font-bold text-white">相談チャット</h2>
+      <div class="flex items-center gap-2">
+        <a href="chat.html" id="chat-dock-popout" target="_blank" class="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-slate-100">別ページで開く</a>
+      </div>
+    </div>
+    <iframe id="chat-dock-frame" title="相談チャット"></iframe>
+  </aside>
+  <script>
+    (() => {
+      const dock = document.getElementById("chat-dock");
+      const frame = document.getElementById("chat-dock-frame");
+      const fab = document.getElementById("chat-dock-fab");
+      const popout = document.getElementById("chat-dock-popout");
+      // 広い画面で開いていたかを覚えておき、次に開いたときも並べて表示する
+      const OPEN_KEY = "darts.chatDock.open";
+      const wideScreen = () => window.matchMedia("(min-width: 1100px)").matches;
+
+      const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      // 滑り込み・滑り出しが終わったら呼ぶ（transitionend が来ないときのために時間でも確かめる）
+      function afterSlide(callback) {
+        if (reducedMotion()) {
+          callback();
+          return;
+        }
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          dock.removeEventListener("transitionend", onEnd);
+          callback();
+        };
+        const onEnd = (event) => {
+          if (event.target === dock && event.propertyName === "transform") finish();
+        };
+        dock.addEventListener("transitionend", onEnd);
+        setTimeout(finish, 400);
+      }
+
+      function setOpen(open) {
+        if (open) {
+          // 表示してから次の描画で滑り込ませる。チャットは滑り込み終わってから読み込む（途中で読み込むと描かれないことがあるため）
+          dock.classList.add("shown");
+          void dock.offsetWidth;
+          dock.classList.add("open");
+          afterSlide(() => {
+            if (dock.classList.contains("open") && !frame.getAttribute("src")) frame.src = "chat.html?embed=1";
+          });
+        } else {
+          dock.classList.remove("open");
+          afterSlide(() => {
+            if (!dock.classList.contains("open")) dock.classList.remove("shown");
+          });
+        }
+        dock.setAttribute("aria-hidden", String(!open));
+        document.body.classList.toggle("chat-dock-open", open);
+        // 右下のボタン1つで開閉する（開いている間は「閉じる」）
+        fab.textContent = open ? "閉じる" : "Chat";
+        fab.setAttribute("aria-expanded", String(open));
+        try {
+          localStorage.setItem(OPEN_KEY, open ? "1" : "0");
+        } catch (error) {
+          // 覚えられなくても開閉はできる
+        }
+      }
+
+      // 別ページはスクリプトで開く。こうしておくと、チャットのページの「閉じる」でそのタブを閉じて、この画面に戻れる
+      popout.addEventListener("click", (event) => {
+        event.preventDefault();
+        const tab = window.open("chat.html", "darts-chat");
+        if (tab) {
+          tab.focus();
+          setOpen(false);
+        } else {
+          location.href = "chat.html";
+        }
+      });
+
+      // 別ページのチャットから「閉じる」で戻ってきたときは、パネルは閉じたままにする。
+      // 埋め込みのチャットは捨てておき、次に「Chat」で開いたときに、別ページで続けた会話も含めて読み込み直す
+      window.addEventListener("message", (event) => {
+        if (event.origin !== location.origin || !event.data || event.data.type !== "darts-chat-returned") return;
+        setOpen(false);
+        frame.removeAttribute("src");
+      });
+
+      fab.addEventListener("click", () => setOpen(!dock.classList.contains("open")));
+
+      let wasOpen = false;
+      try {
+        wasOpen = localStorage.getItem(OPEN_KEY) === "1";
+      } catch (error) {
+        wasOpen = false;
+      }
+      // スマホでは画面を覆ってしまうので、開いたままにはしない
+      if (wasOpen && wideScreen()) setOpen(true);
+    })();
+  </script>
+</body>
+
+</html>
