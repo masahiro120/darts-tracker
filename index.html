@@ -319,6 +319,7 @@
             <ul class="mt-2 list-disc space-y-1 pl-5">
               <li><b>平均のずれ</b>：刺さった位置の平均。どちらに偏っているか（狙いや癖の向き）が分かります。左右に散ると打ち消し合って小さく見えます。</li>
               <li><b>的中</b>：狙った場所に入った本数。BULL ならブル、T20 なら 20 のトリプルです。トリプルを狙ったときは、狙ったナンバー（シングル・ダブル含む）に入った本数も出します。</li>
+              <li><b>センター換算</b>：ブル狙いのゲームを、DARTSLIVE のセンターカウントアップの点数（インナーブル600、アウターブル500、内側シングルはブルに近いほど 480〜70、トリプル60、外側50）に換算した目安です。内側シングルの点数の境目は公開されていないため、内側シングルの幅を7等分して近似しています。</li>
               <li><b>平均のずれ・外れ幅・距離</b>：狙った場所の中心（BULL ならブルの中心、T20 なら 20 のトリプルの中心）から測ります。</li>
               <li><b>外れ幅</b>：1本ずつ、狙いから横・縦に何mm外れたかを向きを無視して平均したもの。毎回狙いからどれくらい外れているかが分かります。</li>
               <li><b>ブレ幅</b>：1本ずつ、刺さった位置の平均（ピンクの×）から横・縦に何mm離れたかを向きを無視して平均したもの。狙いの偏りを除いた、毎回の投げのバラつきが分かります。外れ幅は大きいのにブレ幅が小さいなら、狙う点を直せば良くなります。</li>
@@ -359,6 +360,7 @@
                       <th>No.</th>
                       <th class="text-right">スコア</th>
                       <th class="text-right">スタッツ</th>
+                      <th id="games-center-head" class="text-right">センター</th>
                       <th>メモ</th>
                     </tr>
                   </thead>
@@ -457,6 +459,18 @@
     // ボードの寸法（mm、ソフトダーツ相当の比率）とナンバーの並び（真上から時計回り）
     const BOARD = { innerBull: 6.35, outerBull: 15.9, tripleIn: 99, tripleOut: 107, doubleIn: 162, doubleOut: 170 };
     const NUMBER_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+    // センターカウントアップ（DARTSLIVE）の点数への換算。インナーブル600・アウターブル500、トリプル60、
+    // 外側シングル・ダブル50は公開されている情報に合わせた。内側シングルの 480〜70 の境目は公開されていないため、
+    // 内側シングルの幅を7等分した目安にしている（実際の点数とずれていれば INNER_SINGLE_POINTS と区切り方を調整する）
+    const CENTER_COUNTUP = {
+      innerBull: 600,
+      outerBull: 500,
+      innerSinglePoints: [480, 400, 350, 200, 100, 80, 70],
+      triple: 60,
+      outer: 50,
+      max: 600 * 24
+    };
+
     // 狙える場所。今はクリケットで使う BULL と T20〜T15 に絞る
     // （データベースは T1〜T20 まで受け付けるので、増やすときはここに足すだけでよい）
     const TARGETS = ["BULL", "T20", "T19", "T18", "T17", "T16", "T15"];
@@ -985,6 +999,19 @@
 
     // items の位置を、狙った場所（target）を原点にした座標に直して集計する。
     // 平均のずれ・外れ幅・距離・行ったり来たり・下の本数は狙いが基準になり、ブレ幅とまとまりは狙いに関係しない
+    // 1本をセンターカウントアップの点数に換算する（座標の無いボード外は0）
+    function centerCountUpPoints(item) {
+      if (item.ring === "IB") return CENTER_COUNTUP.innerBull;
+      if (item.ring === "OB") return CENTER_COUNTUP.outerBull;
+      if (item.ring === "T") return CENTER_COUNTUP.triple;
+      if (item.ring === "OS" || item.ring === "D") return CENTER_COUNTUP.outer;
+      if (item.ring !== "IS" || item.x === null || item.y === null) return 0;
+      const bands = CENTER_COUNTUP.innerSinglePoints;
+      const width = (BOARD.tripleIn - BOARD.outerBull) / bands.length;
+      const index = Math.min(bands.length - 1, Math.max(0, Math.floor((Math.hypot(item.x, item.y) - BOARD.outerBull) / width)));
+      return bands[index];
+    }
+
     function computeStats(items, target = "BULL") {
       const origin = targetPoint(target);
       const number = targetNumber(target);
@@ -999,6 +1026,8 @@
         // トリプルを狙ったときに、狙ったナンバー（シングル・ダブル含む）に入った本数
         numberHit: number === null ? null : items.filter((item) => item.number === number).length,
         out: items.filter((item) => item.ring === "OUT").length,
+        // ブル狙いのときだけ、センターカウントアップに換算した合計点（ブルへの近さの目安）
+        centerTotal: target === "BULL" ? items.reduce((sum, item) => sum + centerCountUpPoints(item), 0) : null,
         origin,
         located
       };
@@ -1091,9 +1120,11 @@
         ? targetGames.reduce((sum, game) => sum + game.total_score, 0) / targetGames.length
         : null;
 
+      const centerAverage = target === "BULL" && targetGames.length ? stats.centerTotal / targetGames.length : null;
       statAverageEl.innerHTML = average === null
         ? "-"
-        : `${Math.round(average)}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">スタッツ ${formatStats(average)}</span>`;
+        : `${Math.round(average)}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">スタッツ ${formatStats(average)}</span>`
+          + (centerAverage === null ? "" : `<span class="block whitespace-nowrap text-sm font-semibold text-emerald-300">センター換算 ${Math.round(centerAverage).toLocaleString()}点</span>`);
       statHitLabelEl.textContent = `的中（${targetName(target)}）`;
       statHitEl.innerHTML = stats.count ? formatHit(stats, target) : "-";
       statOutEl.textContent = formatRate(stats.out, stats.count);
@@ -1230,6 +1261,11 @@
 
       const rows = [
         compareRow("スコア", `${gameA.total_score}点`, `${gameB.total_score}点`, formatDiff(gameB.total_score - gameA.total_score, "点")),
+        // ブル狙い同士なら、センターカウントアップに換算した点も比べる
+        ...(a.centerTotal !== null && b.centerTotal !== null
+          ? [compareRow(`センター<br><span class="text-xs font-normal text-slate-400">換算</span>`,
+            `${a.centerTotal.toLocaleString()}点`, `${b.centerTotal.toLocaleString()}点`, formatDiff(b.centerTotal - a.centerTotal, "点"))]
+          : []),
         compareRow(`的中<br><span class="text-xs font-normal text-slate-400">${targetA === targetB ? targetA : `${targetA}／${targetB}`}</span>`,
           rateLines(a.hit, a.count), rateLines(b.hit, b.count), formatDiff(b.hit - a.hit, "本")),
         // どちらかがトリプル狙いのときだけ、狙ったナンバーに入った本数も並べる
@@ -1317,6 +1353,7 @@
           { label: "狙ったナンバー", value: (game, stats) => stats.numberHit }
         ]
       },
+      center: { label: "センター換算（ブル狙い）", unit: "点", digits: 0, caption: "センターカウントアップの点数に換算した目安（最高14,400点）。高いほどブルに近い投げが多いことを示します。", value: (game, stats) => stats.centerTotal },
       flips: { label: "左右の行ったり来たり", unit: "%", digits: 0, lowerIsBetter: true, value: (game, stats) => (stats.flipPairs ? stats.flips / stats.flipPairs * 100 : null) }
     };
 
@@ -1484,8 +1521,11 @@
 
     function renderGamesTable() {
       const listed = gamesForAnalysisTarget();
+      // ブル狙いのときだけ、センターカウントアップに換算した点の列を出す
+      const showCenter = (analysisTargetEl.value || "BULL") === "BULL";
+      document.getElementById("games-center-head").classList.toggle("hidden", !showCenter);
       if (!listed.length) {
-        gamesTableEl.innerHTML = `<tr><td colspan="5" class="text-slate-400">まだ記録がありません。</td></tr>`;
+        gamesTableEl.innerHTML = `<tr><td colspan="6" class="text-slate-400">まだ記録がありません。</td></tr>`;
         return;
       }
       // メモは改行を「／」にして1行にまとめ、行が縦に伸びないようにする（長いメモは表を横スクロールして読む）
@@ -1495,6 +1535,7 @@
           <td class="whitespace-nowrap">${gameNo(game)}</td>
           <td class="text-right font-semibold">${game.total_score}</td>
           <td class="text-right">${formatStats(game.total_score)}</td>
+          ${showCenter ? `<td class="text-right">${computeStats(throwsByGame.get(game.id) || [], "BULL").centerTotal.toLocaleString()}</td>` : ""}
           <td class="whitespace-nowrap">${escapeHtml((game.note || "").replace(/\s*\n\s*/g, " ／ "))}</td>
         </tr>`).join("");
     }
