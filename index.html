@@ -1124,7 +1124,8 @@
       statAverageEl.innerHTML = average === null
         ? "-"
         : `${Math.round(average)}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">スタッツ ${formatStats(average)}</span>`
-          + (centerAverage === null ? "" : `<span class="block whitespace-nowrap text-sm font-semibold text-emerald-300">センター換算 ${Math.round(centerAverage).toLocaleString()}点</span>`);
+          // 狭い画面では「センター換算」と点数の間で折り返す（タイルからはみ出さないように）
+          + (centerAverage === null ? "" : `<span class="block text-sm font-semibold text-emerald-300">${wrapParts(["センター換算", `${Math.round(centerAverage).toLocaleString()}点`])}</span>`);
       statHitLabelEl.textContent = `的中（${targetName(target)}）`;
       statHitEl.innerHTML = stats.count ? formatHit(stats, target) : "-";
       statOutEl.textContent = formatRate(stats.out, stats.count);
