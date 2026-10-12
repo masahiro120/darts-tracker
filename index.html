@@ -281,6 +281,11 @@
               <p class="text-xs text-slate-300">平均スコア</p>
               <p id="stat-average" class="mt-1 text-xl font-black text-white">-</p>
             </div>
+            <!-- ブル狙いのときだけ表示する -->
+            <div id="stat-center-tile" class="hidden rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">センターカウントアップ（換算）</p>
+              <p id="stat-center" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
             <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
               <p id="stat-hit-label" class="text-xs text-slate-300">的中</p>
               <p id="stat-hit" class="mt-1 text-xl font-black text-white">-</p>
@@ -524,6 +529,8 @@
     const trendCaptionEl = document.getElementById("trend-caption");
 
     const statAverageEl = document.getElementById("stat-average");
+    const statCenterTileEl = document.getElementById("stat-center-tile");
+    const statCenterEl = document.getElementById("stat-center");
     const statHitLabelEl = document.getElementById("stat-hit-label");
     const statHitEl = document.getElementById("stat-hit");
     const statOutEl = document.getElementById("stat-out");
@@ -1123,9 +1130,12 @@
       const centerAverage = target === "BULL" && targetGames.length ? stats.centerTotal / targetGames.length : null;
       statAverageEl.innerHTML = average === null
         ? "-"
-        : `${Math.round(average)}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">スタッツ ${formatStats(average)}</span>`
-          // 狭い画面では「センター換算」と点数の間で折り返す（タイルからはみ出さないように）
-          + (centerAverage === null ? "" : `<span class="block text-sm font-semibold text-emerald-300">${wrapParts(["センター換算", `${Math.round(centerAverage).toLocaleString()}点`])}</span>`);
+        : `${Math.round(average)}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">スタッツ ${formatStats(average)}</span>`;
+      // ブル狙いのときだけ、センターカウントアップに換算した1ゲームあたりの平均を、専用のタイルに出す
+      statCenterTileEl.classList.toggle("hidden", target !== "BULL");
+      statCenterEl.innerHTML = centerAverage === null
+        ? "-"
+        : `${Math.round(centerAverage).toLocaleString()}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">最高 ${CENTER_COUNTUP.max.toLocaleString()}</span>`;
       statHitLabelEl.textContent = `的中（${targetName(target)}）`;
       statHitEl.innerHTML = stats.count ? formatHit(stats, target) : "-";
       statOutEl.textContent = formatRate(stats.out, stats.count);
