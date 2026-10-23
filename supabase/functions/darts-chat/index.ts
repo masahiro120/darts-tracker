@@ -134,9 +134,24 @@ function throwLabel(item: Throw) {
 // 練習データを読み込んで、ゲームごとの集計と1本ずつの位置（狙いの中心から）にする
 export async function loadPracticeData() {
   const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  // Supabase は1回で最大1000行しか返さないので、投げの記録は1000行ずつ分けて全部読む
+  const loadAllThrows = async () => {
+    const PAGE_SIZE = 1000;
+    const rows: Throw[] = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from("darts_throws")
+        .select("game_id, round, dart, x, y, number, ring, score")
+        .order("id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) return { data: null, error };
+      rows.push(...((data ?? []) as Throw[]));
+      if (!data || data.length < PAGE_SIZE) return { data: rows, error: null };
+    }
+  };
   const [{ data: gameRows, error: gameError }, { data: throwRows, error: throwError }] = await Promise.all([
     supabase.from("darts_games").select("id, played_at, total_score, note, target").order("played_at", { ascending: true }),
-    supabase.from("darts_throws").select("game_id, round, dart, x, y, number, ring, score").order("id", { ascending: true }).range(0, 99999),
+    loadAllThrows(),
   ]);
   if (gameError) throw gameError;
   if (throwError) throw throwError;
