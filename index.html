@@ -39,6 +39,11 @@
       line-height: 1.5;
     }
 
+    /* 16px 未満だと iPhone は入力時に画面を拡大するので 16px にする */
+    .goal-circle-mm {
+      font-size: 16px;
+    }
+
     .compare-swatch-a {
       color: #facc15;
     }
@@ -185,9 +190,19 @@
               <h2 class="text-lg font-bold text-white">カウントアップ入力</h2>
               <p class="text-sm text-slate-300">刺さった場所をボード上でタップしてください。ボードの外側をタップするとボード外（0点）になります。</p>
             </div>
-            <div>
-              <label for="input-target" class="mb-1 block text-xs font-semibold text-slate-300">狙い</label>
-              <select id="input-target" class="select select-bordered select-sm bg-slate-100 text-slate-900"></select>
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="goal-circle-control flex items-center gap-2">
+                <label class="flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-slate-300">
+                  <input type="checkbox" class="goal-circle-toggle toggle toggle-sm toggle-success" aria-label="目標円を表示">
+                  目標円
+                </label>
+                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="170" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
+                <span class="text-xs text-slate-300">mm</span>
+              </div>
+              <div>
+                <label for="input-target" class="mb-1 block text-xs font-semibold text-slate-300">狙い</label>
+                <select id="input-target" class="select select-bordered select-sm bg-slate-100 text-slate-900"></select>
+              </div>
             </div>
           </div>
 
@@ -272,6 +287,14 @@
                   <option value="all">全期間</option>
                 </select>
               </div>
+              <div class="goal-circle-control flex items-center gap-2">
+                <label class="flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-slate-300">
+                  <input type="checkbox" class="goal-circle-toggle toggle toggle-sm toggle-success" aria-label="目標円を表示">
+                  目標円
+                </label>
+                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="170" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
+                <span class="text-xs text-slate-300">mm</span>
+              </div>
               <button id="refresh-btn" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">更新</button>
             </div>
           </div>
@@ -337,7 +360,7 @@
             <div>
               <h3 class="mb-2 text-sm font-bold text-white">刺さった位置 <span id="plot-caption" class="font-normal text-slate-300"></span></h3>
               <svg id="analysis-board" class="dartboard" viewBox="-200 -200 400 400" aria-label="刺さった位置のプロット"></svg>
-              <p class="mt-2 text-xs text-slate-400">水色の点が1本ずつの位置、ピンクの×が平均の位置、蛍光の緑に塗った区画が狙った場所です。</p>
+              <p class="mt-2 text-xs text-slate-400">水色の点が1本ずつの位置、ピンクの×が平均の位置、蛍光の緑に塗った区画が狙った場所です。目標円をオンにすると、狙いの中心から指定した距離の円（白い点線）を描きます。</p>
             </div>
             <div class="space-y-4">
               <div>
@@ -455,6 +478,11 @@
     // 推移グラフの線の色（2本描くときは青とオレンジ。色覚の違いでも見分けられることを確認済み）
     const TREND_SERIES_COLORS = ["#3b82f6", "#d97706"];
     const INPUT_TARGET_KEY = "darts.inputTarget";
+    // 目標円（狙いの中心から指定した距離の円）の表示設定
+    const GOAL_CIRCLE_KEY = "darts.goalCircle";
+    const GOAL_CIRCLE_DEFAULT = { on: false, mm: 40 };
+    const GOAL_CIRCLE_MIN = 5;
+    const GOAL_CIRCLE_MAX = 170;
     const PAGE_SIZE = 1000;
 
     const supabaseClient = window.supabase && typeof window.supabase.createClient === "function"
@@ -551,6 +579,7 @@
 
     let throws = loadInProgress();
     let inputTarget = loadInputTarget();
+    let goalCircle = loadGoalCircle();
     let games = [];
     let scoreChart = null;
     let inputMarkersLayer = null;
@@ -613,6 +642,31 @@
       } catch (error) {
         // 保存できなくても入力は続けられる
       }
+    }
+
+    // 目標円のオン・オフと半径もブラウザに覚えておく
+    function loadGoalCircle() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(GOAL_CIRCLE_KEY) || "null");
+        if (!saved) return { ...GOAL_CIRCLE_DEFAULT };
+        return { on: Boolean(saved.on), mm: clampGoalCircle(saved.mm) };
+      } catch (error) {
+        return { ...GOAL_CIRCLE_DEFAULT };
+      }
+    }
+
+    function saveGoalCircle() {
+      try {
+        localStorage.setItem(GOAL_CIRCLE_KEY, JSON.stringify(goalCircle));
+      } catch (error) {
+        // 保存できなくても表示は切り替わる
+      }
+    }
+
+    function clampGoalCircle(value) {
+      const mm = Math.round(Number(value));
+      if (!Number.isFinite(mm)) return GOAL_CIRCLE_DEFAULT.mm;
+      return Math.min(GOAL_CIRCLE_MAX, Math.max(GOAL_CIRCLE_MIN, mm));
     }
 
     function targetOptions(targets, counts = null) {
@@ -699,6 +753,23 @@
       }
       const center = NUMBER_ORDER.indexOf(number) * 18;
       layer.appendChild(svgEl("path", { d: sectorPath(BOARD.tripleIn, BOARD.tripleOut, center - 9, center + 9), fill: TARGET_FILL_COLOR, ...wire }));
+    }
+
+    // 狙いの中心から goalCircle.mm の円を描く。白い点線の下に暗い線を敷き、ボードの白・黒どちらの上でも見えるようにする
+    function plotGoalCircle(layer, target) {
+      if (!goalCircle.on) return;
+      const center = targetPoint(target);
+      const r = goalCircle.mm;
+      const group = svgEl("g", { "pointer-events": "none" });
+      group.appendChild(svgEl("circle", { cx: center.x, cy: -center.y, r, fill: "none", stroke: "#0b0f19", "stroke-width": 3 }));
+      group.appendChild(svgEl("circle", { cx: center.x, cy: -center.y, r, fill: "none", stroke: "#ffffff", "stroke-width": 1.5, "stroke-dasharray": "4 3" }));
+      const label = svgEl("text", {
+        x: center.x, y: -center.y - r - 3, fill: "#ffffff", stroke: "#0b0f19", "stroke-width": 2.5, "paint-order": "stroke",
+        "font-size": 10, "font-weight": 700, "text-anchor": "middle"
+      });
+      label.textContent = `${r}mm`;
+      group.appendChild(label);
+      layer.appendChild(group);
     }
 
     // ---------- ボードの描画 ----------
@@ -830,6 +901,8 @@
           stroke: "#0b0f19", "stroke-width": 1.5
         }));
       });
+      // 目標円は点の上に描き、円の内側に入ったかを見やすくする
+      plotGoalCircle(inputMarkersLayer, inputTarget);
 
       throwsTableEl.innerHTML = Array.from({ length: ROUNDS }, (_, roundIndex) => {
         const round = roundIndex + 1;
@@ -1149,6 +1222,7 @@
       analysisMarkersLayer.innerHTML = "";
       plotTarget(analysisMarkersLayer, target);
       plotThrows(analysisMarkersLayer, targetThrows, MARKER_COLORS.past);
+      plotGoalCircle(analysisMarkersLayer, target);
       // 平均のずれは狙いからの値なので、ボード上では狙いの位置に足して描く
       if (stats.located.length) plotMeanCross(analysisMarkersLayer, stats.origin.x + stats.meanX, stats.origin.y + stats.meanY, "#f472b6");
 
@@ -1259,6 +1333,8 @@
       if (targetB !== targetA) plotTarget(compareMarkersLayer, targetB);
       plotThrows(compareMarkersLayer, throwsA, COMPARE_COLORS.a, "circle", "A ");
       plotThrows(compareMarkersLayer, throwsB, COMPARE_COLORS.b, "diamond", "B ");
+      plotGoalCircle(compareMarkersLayer, targetA);
+      if (targetB !== targetA) plotGoalCircle(compareMarkersLayer, targetB);
       // 平均のずれは狙いからの値なので、ボード上ではそれぞれの狙いの位置に足して描く
       if (hasA) plotMeanCross(compareMarkersLayer, a.origin.x + a.meanX, a.origin.y + a.meanY, COMPARE_COLORS.a);
       if (hasB) plotMeanCross(compareMarkersLayer, b.origin.x + b.meanX, b.origin.y + b.meanY, COMPARE_COLORS.b);
@@ -1580,6 +1656,46 @@
       saveInputTarget();
       renderInput();
     });
+
+    // 目標円の操作は入力欄と分析欄の両方にあり、どちらで変えても同じ設定にそろえる
+    const goalCircleToggles = document.querySelectorAll(".goal-circle-toggle");
+    const goalCircleInputs = document.querySelectorAll(".goal-circle-mm");
+
+    function syncGoalCircleControls() {
+      goalCircleToggles.forEach((el) => { el.checked = goalCircle.on; });
+      goalCircleInputs.forEach((el) => {
+        if (document.activeElement !== el) el.value = goalCircle.mm;
+        el.disabled = !goalCircle.on;
+      });
+    }
+
+    function applyGoalCircle() {
+      saveGoalCircle();
+      syncGoalCircleControls();
+      renderInput();
+      renderAnalysis();
+      loadComparison();
+    }
+
+    goalCircleToggles.forEach((el) => el.addEventListener("change", () => {
+      goalCircle.on = el.checked;
+      applyGoalCircle();
+    }));
+    goalCircleInputs.forEach((el) => {
+      // 入力中は範囲内の数字のときだけ反映し、確定したら範囲に収めて表示し直す
+      el.addEventListener("input", () => {
+        const mm = Number(el.value);
+        if (el.value === "" || mm < GOAL_CIRCLE_MIN || mm > GOAL_CIRCLE_MAX) return;
+        goalCircle.mm = clampGoalCircle(mm);
+        applyGoalCircle();
+      });
+      el.addEventListener("change", () => {
+        goalCircle.mm = clampGoalCircle(el.value);
+        el.value = goalCircle.mm;
+        applyGoalCircle();
+      });
+    });
+    syncGoalCircleControls();
 
     inputMarkersLayer = drawBoard(inputBoardEl);
     analysisMarkersLayer = drawBoard(analysisBoardEl);
