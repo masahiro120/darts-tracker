@@ -196,7 +196,7 @@
                   <input type="checkbox" class="goal-circle-toggle toggle toggle-sm toggle-success" aria-label="目標円を表示">
                   目標円
                 </label>
-                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="170" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
+                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="185" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
                 <span class="text-xs text-slate-300">mm</span>
               </div>
               <div>
@@ -208,7 +208,7 @@
 
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div>
-              <svg id="input-board" class="dartboard dartboard-input" viewBox="-200 -200 400 400" aria-label="入力用ダーツボード"></svg>
+              <svg id="input-board" class="dartboard dartboard-input" viewBox="-215 -215 430 430" aria-label="入力用ダーツボード"></svg>
             </div>
 
             <div class="space-y-4">
@@ -292,7 +292,7 @@
                   <input type="checkbox" class="goal-circle-toggle toggle toggle-sm toggle-success" aria-label="目標円を表示">
                   目標円
                 </label>
-                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="170" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
+                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="185" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
                 <span class="text-xs text-slate-300">mm</span>
               </div>
               <button id="refresh-btn" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">更新</button>
@@ -359,7 +359,7 @@
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div>
               <h3 class="mb-2 text-sm font-bold text-white">刺さった位置 <span id="plot-caption" class="font-normal text-slate-300"></span></h3>
-              <svg id="analysis-board" class="dartboard" viewBox="-200 -200 400 400" aria-label="刺さった位置のプロット"></svg>
+              <svg id="analysis-board" class="dartboard" viewBox="-215 -215 430 430" aria-label="刺さった位置のプロット"></svg>
               <p class="mt-2 text-xs text-slate-400">水色の点が1本ずつの位置、ピンクの×が平均の位置、蛍光の緑に塗った区画が狙った場所です。目標円をオンにすると、狙いの中心から指定した距離の円（白い点線）を描きます。</p>
             </div>
             <div class="space-y-4">
@@ -423,7 +423,7 @@
 
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
             <div>
-              <svg id="compare-board" class="dartboard" viewBox="-200 -200 400 400" aria-label="2ゲームの刺さった位置の比較"></svg>
+              <svg id="compare-board" class="dartboard" viewBox="-215 -215 430 430" aria-label="2ゲームの刺さった位置の比較"></svg>
               <p class="mt-2 text-xs text-slate-400">
                 <span class="compare-swatch-a">●</span> ゲームA　<span class="compare-swatch-b">◆</span> ゲームB　× はそれぞれの平均の位置、蛍光の緑に塗った区画は狙った場所です。
               </p>
@@ -482,15 +482,20 @@
     const GOAL_CIRCLE_KEY = "darts.goalCircle";
     const GOAL_CIRCLE_DEFAULT = { on: false, mm: 40 };
     const GOAL_CIRCLE_MIN = 5;
-    const GOAL_CIRCLE_MAX = 170;
+    const GOAL_CIRCLE_MAX = 185;
     const PAGE_SIZE = 1000;
 
     const supabaseClient = window.supabase && typeof window.supabase.createClient === "function"
       ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
       : null;
 
-    // ボードの寸法（mm、ソフトダーツ相当の比率）とナンバーの並び（真上から時計回り）
-    const BOARD = { innerBull: 6.35, outerBull: 15.9, tripleIn: 99, tripleOut: 107, doubleIn: 162, doubleOut: 170 };
+    // ボードの寸法（mm、中心からの半径）。自宅のソフトダーツボードの実測値（2026-11-04）：
+    // インナーブル直径18・アウターブル直径43、内側シングル幅82・トリプル幅16・外側シングル幅50・ダブル幅16（ふちは除く）。
+    // それより前の記録はスティールダーツの寸法の絵で入力していたため、sql/darts_board_resize_migration.sql で換算済み
+    const BOARD = { innerBull: 9, outerBull: 21.5, tripleIn: 103.5, tripleOut: 119.5, doubleIn: 169.5, doubleOut: 185.5 };
+    // ナンバーを書く半径と、ボードの外枠の半径（SVG の viewBox は ±BOARD_FRAME）
+    const NUMBER_RADIUS = 200;
+    const BOARD_FRAME = 215;
     const NUMBER_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
     // センターカウントアップ（DARTSLIVE）の点数への換算。インナーブル600・アウターブル500、トリプル60、
     // 外側シングル・ダブル50は公開されている情報に合わせた。内側シングルの 480〜70 の境目は公開されていないため、
@@ -508,7 +513,7 @@
     // （データベースは T1〜T20 まで受け付けるので、増やすときはここに足すだけでよい）
     const TARGETS = ["BULL", "T20", "T19", "T18", "T17", "T16", "T15"];
     // トリプルを狙うときの中心（トリプルのリングの真ん中）までの半径
-    const TRIPLE_CENTER_RADIUS = 103;
+    const TRIPLE_CENTER_RADIUS = (BOARD.tripleIn + BOARD.tripleOut) / 2;
     // 狙った区画を塗る色（蛍光の緑。ボードの赤・青・黒・白や、投げの点の水色・黄色と紛れない）
     const TARGET_FILL_COLOR = "#39ff14";
     // 左右の行ったり来たりを数えるとき、狙いの縦の線からこの距離（mm）以内の投げは除外する
@@ -797,7 +802,7 @@
     function drawBoard(svg) {
       svg.innerHTML = "";
       const wire = { stroke: "#94a3b8", "stroke-width": 0.6 };
-      svg.appendChild(svgEl("circle", { cx: 0, cy: 0, r: 200, fill: "#0b0f19" }));
+      svg.appendChild(svgEl("circle", { cx: 0, cy: 0, r: BOARD_FRAME, fill: "#0b0f19" }));
 
       NUMBER_ORDER.forEach((number, index) => {
         const start = index * 18 - 9;
@@ -813,7 +818,7 @@
           svg.appendChild(svgEl("path", { d: sectorPath(inner, outer, start, end), fill, ...wire }));
         });
 
-        const [tx, ty] = polar(185, index * 18);
+        const [tx, ty] = polar(NUMBER_RADIUS, index * 18);
         const text = svgEl("text", {
           x: tx, y: ty, fill: "#f8fafc", "font-size": 15, "font-weight": 700,
           "text-anchor": "middle", "dominant-baseline": "central"
