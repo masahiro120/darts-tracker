@@ -196,7 +196,7 @@
                   <input type="checkbox" class="goal-circle-toggle toggle toggle-sm toggle-success" aria-label="目標円を表示">
                   目標円
                 </label>
-                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="185" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
+                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="185" step="0.5" inputmode="decimal" aria-label="目標円の半径（mm）">
                 <span class="text-xs text-slate-300">mm</span>
               </div>
               <div>
@@ -230,6 +230,8 @@
                   <p id="total-score" class="mt-1 text-xl font-black text-amber-200">0</p>
                 </div>
               </div>
+
+              <p id="inner-half-input" class="text-sm font-semibold text-slate-200"></p>
 
               <div class="grid grid-cols-3 gap-2">
                 <button id="undo-btn" class="rounded-lg bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40">1本戻す</button>
@@ -292,7 +294,7 @@
                   <input type="checkbox" class="goal-circle-toggle toggle toggle-sm toggle-success" aria-label="目標円を表示">
                   目標円
                 </label>
-                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="185" step="1" inputmode="numeric" aria-label="目標円の半径（mm）">
+                <input type="number" class="goal-circle-mm input input-bordered input-sm w-20 bg-slate-100 text-slate-900" min="5" max="185" step="0.5" inputmode="decimal" aria-label="目標円の半径（mm）">
                 <span class="text-xs text-slate-300">mm</span>
               </div>
               <button id="refresh-btn" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">更新</button>
@@ -312,6 +314,11 @@
             <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
               <p id="stat-hit-label" class="text-xs text-slate-300">的中</p>
               <p id="stat-hit" class="mt-1 text-xl font-black text-white">-</p>
+            </div>
+            <!-- ブル狙いのときだけ表示する -->
+            <div id="stat-inner-half-tile" class="hidden rounded-xl border border-slate-700 bg-slate-800/70 p-3">
+              <p class="text-xs text-slate-300">内側シングルの半分より内側</p>
+              <p id="stat-inner-half" class="mt-1 text-xl font-black text-white">-</p>
             </div>
             <div class="rounded-xl border border-slate-700 bg-slate-800/70 p-3">
               <p class="text-xs text-slate-300">ボード外</p>
@@ -348,6 +355,7 @@
               <li><b>平均のずれ</b>：刺さった位置の平均。どちらに偏っているか（狙いや癖の向き）が分かります。左右に散ると打ち消し合って小さく見えます。</li>
               <li><b>的中</b>：狙った場所に入った本数。BULL ならブル、T20 なら 20 のトリプルです。トリプルを狙ったときは、狙ったナンバー（シングル・ダブル含む）に入った本数も出します。</li>
               <li><b>センター換算</b>：ブル狙いのゲームを、DARTSLIVE のセンターカウントアップの点数（インナーブル600、アウターブル500、内側シングルはブルに近いほど 480〜70、トリプル60、外側50）に換算した目安です。内側シングルの点数の境目は公開されていないため、内側シングルの幅を7等分して近似しています。</li>
+              <li><b>内側シングルの半分より内側</b>：ブル狙いのとき、ブルと内側シングルの内側半分（中心から62.5mm以内）に入った本数です。目標円を 62.5mm にすると、ボードで境目を確認できます。</li>
               <li><b>平均のずれ・外れ幅・距離</b>：狙った場所の中心（BULL ならブルの中心、T20 なら 20 のトリプルの中心）から測ります。</li>
               <li><b>外れ幅</b>：1本ずつ、狙いから横・縦に何mm外れたかを向きを無視して平均したもの。毎回狙いからどれくらい外れているかが分かります。</li>
               <li><b>ブレ幅</b>：1本ずつ、刺さった位置の平均（ピンクの×）から横・縦に何mm離れたかを向きを無視して平均したもの。狙いの偏りを除いた、毎回の投げのバラつきが分かります。外れ幅は大きいのにブレ幅が小さいなら、狙う点を直せば良くなります。</li>
@@ -389,6 +397,7 @@
                       <th class="text-right">スコア</th>
                       <th class="text-right">スタッツ</th>
                       <th id="games-center-head" class="text-right">センター</th>
+                      <th id="games-inner-half-head" class="whitespace-nowrap text-right">内側半分</th>
                       <th>メモ</th>
                     </tr>
                   </thead>
@@ -480,7 +489,7 @@
     const INPUT_TARGET_KEY = "darts.inputTarget";
     // 目標円（狙いの中心から指定した距離の円）の表示設定
     const GOAL_CIRCLE_KEY = "darts.goalCircle";
-    const GOAL_CIRCLE_DEFAULT = { on: false, mm: 40 };
+    const GOAL_CIRCLE_DEFAULT = { on: false, mm: 62.5 };
     const GOAL_CIRCLE_MIN = 5;
     const GOAL_CIRCLE_MAX = 185;
     const PAGE_SIZE = 1000;
@@ -493,6 +502,8 @@
     // インナーブル直径18・アウターブル直径43、内側シングル幅82・トリプル幅16・外側シングル幅50・ダブル幅16（ふちは除く）。
     // それより前の記録はスティールダーツの寸法の絵で入力していたため、sql/darts_board_resize_migration.sql で換算済み
     const BOARD = { innerBull: 9, outerBull: 21.5, tripleIn: 103.5, tripleOut: 119.5, doubleIn: 169.5, doubleOut: 185.5 };
+    // 内側シングルの幅のちょうど半分の位置（中心からの半径 62.5mm）。ブル狙いのとき、ここより内側に入った本数を数える
+    const INNER_HALF_RADIUS = (BOARD.outerBull + BOARD.tripleIn) / 2;
     // ナンバーを書く半径と、ボードの外枠の半径（SVG の viewBox は ±BOARD_FRAME）
     const NUMBER_RADIUS = 200;
     const BOARD_FRAME = 215;
@@ -536,6 +547,7 @@
     const currentDartEl = document.getElementById("current-dart");
     const roundScoreEl = document.getElementById("round-score");
     const totalScoreEl = document.getElementById("total-score");
+    const innerHalfInputEl = document.getElementById("inner-half-input");
     const undoBtn = document.getElementById("undo-btn");
     const missBtn = document.getElementById("miss-btn");
     const resetBtn = document.getElementById("reset-btn");
@@ -564,6 +576,8 @@
     const statAverageEl = document.getElementById("stat-average");
     const statCenterTileEl = document.getElementById("stat-center-tile");
     const statCenterEl = document.getElementById("stat-center");
+    const statInnerHalfTileEl = document.getElementById("stat-inner-half-tile");
+    const statInnerHalfEl = document.getElementById("stat-inner-half");
     const statHitLabelEl = document.getElementById("stat-hit-label");
     const statHitEl = document.getElementById("stat-hit");
     const statOutEl = document.getElementById("stat-out");
@@ -669,7 +683,7 @@
     }
 
     function clampGoalCircle(value) {
-      const mm = Math.round(Number(value));
+      const mm = Math.round(Number(value) * 2) / 2;
       if (!Number.isFinite(mm)) return GOAL_CIRCLE_DEFAULT.mm;
       return Math.min(GOAL_CIRCLE_MAX, Math.max(GOAL_CIRCLE_MIN, mm));
     }
@@ -889,6 +903,9 @@
       roundScoreEl.textContent = roundTotal;
       totalScoreEl.textContent = total;
 
+      innerHalfInputEl.classList.toggle("hidden", inputTarget !== "BULL");
+      innerHalfInputEl.textContent = `内側シングルの半分より内側：${countInnerHalf(throws)} / ${throws.length}本`;
+
       undoBtn.disabled = !throws.length;
       resetBtn.disabled = !throws.length;
       missBtn.disabled = finished;
@@ -1097,6 +1114,11 @@
       return bands[index];
     }
 
+    // 内側シングルの半分より内側（ブルを含む）に入った本数
+    function countInnerHalf(items) {
+      return items.filter((item) => item.x !== null && item.y !== null && Math.hypot(item.x, item.y) <= INNER_HALF_RADIUS).length;
+    }
+
     function computeStats(items, target = "BULL") {
       const origin = targetPoint(target);
       const number = targetNumber(target);
@@ -1113,6 +1135,7 @@
         out: items.filter((item) => item.ring === "OUT").length,
         // ブル狙いのときだけ、センターカウントアップに換算した合計点（ブルへの近さの目安）
         centerTotal: target === "BULL" ? items.reduce((sum, item) => sum + centerCountUpPoints(item), 0) : null,
+        innerHalf: target === "BULL" ? countInnerHalf(items) : null,
         origin,
         located
       };
@@ -1214,6 +1237,10 @@
       statCenterEl.innerHTML = centerAverage === null
         ? "-"
         : `${Math.round(centerAverage).toLocaleString()}点<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">最高 ${CENTER_COUNTUP.max.toLocaleString()}</span>`;
+      statInnerHalfTileEl.classList.toggle("hidden", target !== "BULL");
+      statInnerHalfEl.innerHTML = target === "BULL" && stats.count
+        ? `${formatRate(stats.innerHalf, stats.count)}<span class="inline-block whitespace-nowrap text-sm font-semibold text-slate-300 ml-2 max-sm:ml-0 max-sm:block">1ゲーム平均 ${(stats.innerHalf / targetGames.length).toFixed(1)}本</span>`
+        : "-";
       statHitLabelEl.textContent = `的中（${targetName(target)}）`;
       statHitEl.innerHTML = stats.count ? formatHit(stats, target) : "-";
       statOutEl.textContent = formatRate(stats.out, stats.count);
@@ -1358,6 +1385,9 @@
           ? [compareRow(`センター<br><span class="text-xs font-normal text-slate-400">換算</span>`,
             `${a.centerTotal.toLocaleString()}点`, `${b.centerTotal.toLocaleString()}点`, formatDiff(b.centerTotal - a.centerTotal, "点"))]
           : []),
+        ...(a.innerHalf !== null && b.innerHalf !== null
+          ? [compareRow("内側シングルの<br>半分より内側", rateLines(a.innerHalf, a.count), rateLines(b.innerHalf, b.count), formatDiff(b.innerHalf - a.innerHalf, "本"))]
+          : []),
         compareRow(`的中<br><span class="text-xs font-normal text-slate-400">${targetA === targetB ? targetA : `${targetA}／${targetB}`}</span>`,
           rateLines(a.hit, a.count), rateLines(b.hit, b.count), formatDiff(b.hit - a.hit, "本")),
         // どちらかがトリプル狙いのときだけ、狙ったナンバーに入った本数も並べる
@@ -1446,6 +1476,7 @@
         ]
       },
       center: { label: "センター換算（ブル狙い）", unit: "点", digits: 0, caption: "センターカウントアップの点数に換算した目安（最高14,400点）。高いほどブルに近い投げが多いことを示します。", value: (game, stats) => stats.centerTotal },
+      innerHalf: { label: "内側シングルの半分より内側（ブル狙い）", unit: "本", digits: 0, caption: "1ゲーム24本のうち、中心から62.5mm以内に入った本数です。", value: (game, stats) => stats.innerHalf },
       flips: { label: "左右の行ったり来たり", unit: "%", digits: 0, lowerIsBetter: true, value: (game, stats) => (stats.flipPairs ? stats.flips / stats.flipPairs * 100 : null) }
     };
 
@@ -1616,8 +1647,9 @@
       // ブル狙いのときだけ、センターカウントアップに換算した点の列を出す
       const showCenter = (analysisTargetEl.value || "BULL") === "BULL";
       document.getElementById("games-center-head").classList.toggle("hidden", !showCenter);
+      document.getElementById("games-inner-half-head").classList.toggle("hidden", !showCenter);
       if (!listed.length) {
-        gamesTableEl.innerHTML = `<tr><td colspan="6" class="text-slate-400">まだ記録がありません。</td></tr>`;
+        gamesTableEl.innerHTML = `<tr><td colspan="7" class="text-slate-400">まだ記録がありません。</td></tr>`;
         return;
       }
       // メモは改行を「／」にして1行にまとめ、行が縦に伸びないようにする（長いメモは表を横スクロールして読む）
@@ -1628,6 +1660,7 @@
           <td class="text-right font-semibold">${game.total_score}</td>
           <td class="text-right">${formatStats(game.total_score)}</td>
           ${showCenter ? `<td class="text-right">${computeStats(throwsByGame.get(game.id) || [], "BULL").centerTotal.toLocaleString()}</td>` : ""}
+          ${showCenter ? `<td class="text-right">${countInnerHalf(throwsByGame.get(game.id) || [])}本</td>` : ""}
           <td class="whitespace-nowrap">${escapeHtml((game.note || "").replace(/\s*\n\s*/g, " ／ "))}</td>
         </tr>`).join("");
     }
